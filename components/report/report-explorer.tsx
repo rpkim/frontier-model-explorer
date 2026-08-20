@@ -18,11 +18,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { PasswordDialog } from "@/components/explorer/password-dialog"
 import { exportReportPdf } from "@/components/report/export-report-pdf"
 import { ReportMarkdown } from "@/components/report/report-markdown"
-import { useQueryState } from "@/hooks/use-query-state"
 import { formatDate, timeAgo } from "@/lib/aa/format"
-import { hasActiveFilters, parseCatalogFilters } from "@/lib/aa/filter"
 import { downloadMarkdownFile, reportDownloadBasename } from "@/lib/aa/report-download"
-import type { CatalogReport, ModelNode } from "@/lib/aa/types"
+import type { CatalogReport } from "@/lib/aa/types"
 import { LOCALE_META, parseLocale } from "@/lib/i18n/locales"
 import { useI18n } from "@/lib/i18n/provider"
 
@@ -45,16 +43,11 @@ function errorMessage(
 }
 
 export function ReportExplorer({
-  catalog,
   snapshotSyncedAt,
 }: {
-  catalog: ModelNode[]
   snapshotSyncedAt: string
 }) {
   const { t, locale } = useI18n()
-  const { get } = useQueryState()
-  const filters = parseCatalogFilters(get)
-  const filtersActive = hasActiveFilters(filters)
 
   const [report, setReport] = useState<CatalogReport | null>(null)
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading")
@@ -140,13 +133,6 @@ export function ReportExplorer({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-5 sm:px-6">
-        {filtersActive && !generating && (
-          <Alert>
-            <InfoIcon />
-            <AlertDescription>{t("report.filtersIgnored", { count: catalog.length })}</AlertDescription>
-          </Alert>
-        )}
-
         {generating ? (
           <GeneratingState />
         ) : loadState === "loading" ? (
