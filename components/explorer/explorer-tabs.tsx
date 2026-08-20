@@ -9,14 +9,15 @@ import { FilterBar } from "@/components/explorer/filter-bar"
 import { MindMapExplorer } from "@/components/mindmap/mind-map-explorer"
 import { CompareExplorer } from "@/components/compare/compare-explorer"
 import { ReportExplorer } from "@/components/report/report-explorer"
+import { GuideExplorer } from "@/components/guide/guide-explorer"
 import { useI18n } from "@/lib/i18n/provider"
 
 const MAX_COMPARE_MODELS = 4
 
-type ExplorerTab = "mindmap" | "compare" | "report"
+type ExplorerTab = "mindmap" | "compare" | "report" | "guides"
 
 function parseTab(raw: string | null): ExplorerTab {
-  if (raw === "compare" || raw === "report") return raw
+  if (raw === "compare" || raw === "report" || raw === "guides") return raw
   return "mindmap"
 }
 
@@ -68,19 +69,30 @@ export function ExplorerTabs({
           >
             {t("tabs.report")}
           </TabsTrigger>
+          <TabsTrigger
+            value="guides"
+            className="rounded-none border-b-2 border-transparent bg-transparent px-3 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+          >
+            {t("tabs.guides")}
+          </TabsTrigger>
         </TabsList>
       </div>
-      <div className="border-b border-border px-4 py-3 sm:px-6">
-        <FilterBar catalog={models} filteredCount={filteredModels.length} />
-      </div>
+      {tab === "mindmap" && (
+        <div className="border-b border-border px-4 py-3 sm:px-6">
+          <FilterBar catalog={models} filteredCount={filteredModels.length} />
+        </div>
+      )}
       <TabsContent value="mindmap" className="min-h-0 flex-1 data-[state=inactive]:hidden">
         <MindMapExplorer models={filteredModels} hub={hub} onAddToCompare={addToCompare} />
       </TabsContent>
       <TabsContent value="compare" className="min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden">
-        <CompareExplorer models={filteredModels} catalog={models} />
+        <CompareExplorer models={models} catalog={models} />
       </TabsContent>
       <TabsContent value="report" className="min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden">
-        <ReportExplorer catalog={models} snapshotSyncedAt={syncedAt} />
+        <ReportExplorer snapshotSyncedAt={syncedAt} />
+      </TabsContent>
+      <TabsContent value="guides" className="min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden">
+        <GuideExplorer />
       </TabsContent>
     </Tabs>
   )

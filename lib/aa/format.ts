@@ -38,6 +38,15 @@ export function formatGb(value: number | null | undefined): string {
   return `${Math.round(value)} GB`
 }
 
+/** Disk / weight size from bytes, shown as decimal GB (1e9). */
+export function formatBytesGb(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return "—"
+  const gb = bytes / 1e9
+  if (gb >= 100) return `${Math.round(gb)} GB`
+  if (gb >= 10) return `${(Math.round(gb * 10) / 10).toFixed(1)} GB`
+  return `${(Math.round(gb * 100) / 100).toString()} GB`
+}
+
 function trimZeros(value: number): string {
   const digits = value >= 100 ? 0 : value >= 10 ? 1 : 2
   return Number(value.toFixed(digits)).toString()

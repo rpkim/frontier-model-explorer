@@ -10,19 +10,43 @@ import {
 } from "./hf-resolve"
 import { readHubSnapshot, writeHubSnapshot } from "./hub-snapshot"
 import { readSnapshot } from "./snapshot"
-import type { HubDetail, HubSnapshot, HubVramEstimate, ModelNode } from "./types"
+import type {
+  HubDetail,
+  HubModelSizeSource,
+  HubSnapshot,
+  HubTensorDtype,
+  HubVramEstimate,
+  ModelNode,
+} from "./types"
 
 export const VLLM_DOCS_URL = "https://docs.vllm.ai/en/stable/cli/serve.html"
 export const SGLANG_DOCS_URL = "https://docs.sglang.ai/"
 
-const HF_API_TIMEOUT_MS = 15_000
-const HF_CONFIG_TIMEOUT_MS = 8_000
-const HF_SEARCH_TIMEOUT_MS = 10_000
+const HF_API_TIMEOUT_MS = 12_000
+const HF_CONFIG_TIMEOUT_MS = 6_000
+const HF_SEARCH_TIMEOUT_MS = 8_000
 const HUB_CONCURRENCY = 4
+const HUB_FRESH_MS = 12 * 60 * 60 * 1000
 const VRAM_OVERHEAD = 1.2
 const HF_SEARCH_LIMIT = 8
 
-export type HubRefreshErrorCode = "NO_SNAPSHOT" | "MODEL_NOT_FOUND" | "NOT_OPEN" | "UNKNOWN_HUB_ERROR"
+/** Repeated `expand=` values. HF rejects comma-separated expand (HTTP 400). */
+const HF_MODEL_EXPAND = [
+  "safetensors",
+  "cardData",
+  "siblings",
+  "usedStorage",
+  "gated",
+  "tags",
+  "pipeline_tag",
+] as const
+
+export type HubRefreshErrorCode =
+  | "NO_SNAPSHOT"
+  | "MODEL_NOT_FOUND"
+  | "NOT_OPEN"
+  | "HUB_STORE_FAILED"
+  | "UNKNOWN_HUB_ERROR"
 
 export class HubRefreshError extends Error {
   constructor(public code: HubRefreshErrorCode) {
@@ -62,6 +86,66 @@ interface HfModelInfo {
   siblings?: { rfilename: string; size?: number }[]
 }
 
+interface HfConfigExtras {
+  parameterCount?: number
+  torchDtype?: string
+  hiddenSize?: number
+  numLayers?: number
+  numAttentionHeads?: number
+  numKvHeads?: number
+  headDim?: number
+}
+
+interface ModelSizeInfo {
+  bytes: number
+  source: HubModelSizeSource
+  ggufFilename?: string
+}
+
+const DTYPE_BYTES: Record<string, number> = {
+  F64: 8,
+  F32: 4,
+  F16: 2,
+  BF16: 2,
+  F8: 1,
+  F8E4M3: 1,
+  F8_E4M3: 1,
+  F8E5M2: 1,
+  F8_E5M2: 1,
+  I64: 8,
+  I32: 4,
+  I16: 2,
+  I8: 1,
+  U8: 1,
+  I4: 0.5,
+  U4: 0.5,
+  BOOL: 1,
+}
+
+const DTYPE_ALIASES: Record<string, string> = {
+  BFLOAT16: "BF16",
+  FLOAT16: "F16",
+  FLOAT32: "F32",
+  FLOAT64: "F64",
+  FLOAT8: "F8",
+  FP16: "F16",
+  FP32: "F32",
+  FP64: "F64",
+  HALF: "F16",
+  FLOAT: "F32",
+  DOUBLE: "F64",
+  INT8: "I8",
+  UINT8: "U8",
+  INT4: "I4",
+  UINT4: "U4",
+  INT16: "I16",
+  INT32: "I32",
+  INT64: "I64",
+}
+
+const KV_CONTEXT_TOKENS = 4096
+const KV_BYTES_PER_ELEM = 2
+
 function hfToken(): string | undefined {
   return process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN || undefined
 }
@@ -84,11 +168,22 @@ function asFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function hfModelInfoUrl(hfId: string): string {
+  const params = new URLSearchParams()
+  for (const field of HF_MODEL_EXPAND) params.append("expand", field)
+  params.set("blobs", "true")
+  return `https://huggingface.co/api/models/${hfId}?${params.toString()}`
+}
+
 function parameterCountFromInfo(info: HfModelInfo): number | undefined {
   const total = asFiniteNumber(info.safetensors?.total)
   if (total) return total
   const params = info.safetensors?.parameters
-  if (!params) return undefined
+  if (!isPlainRecord(params)) return undefined
   let sum = 0
   for (const value of Object.values(params)) {
     if (typeof value === "number" && Number.isFinite(value)) sum += value
@@ -96,16 +191,103 @@ function parameterCountFromInfo(info: HfModelInfo): number | undefined {
   return sum > 0 ? sum : undefined
 }
 
-function safetensorsBytesFromInfo(info: HfModelInfo): number | undefined {
-  const used = asFiniteNumber(info.usedStorage)
-  if (used) return used
-  if (!info.siblings) return undefined
-  let sum = 0
+export function normalizeDtype(raw: string): string {
+  const upper = raw.trim().toUpperCase().replace(/^TORCH\./, "")
+  const compact = upper.replace(/[-_.]/g, "")
+  return DTYPE_ALIASES[compact] ?? upper.replace(/-/g, "_")
+}
+
+function bytesPerDtype(dtype: string): number | undefined {
+  const normalized = normalizeDtype(dtype)
+  return DTYPE_BYTES[normalized] ?? DTYPE_BYTES[normalized.replace(/_/g, "")]
+}
+
+function siblingFiles(
+  info: HfModelInfo,
+  predicate: (name: string) => boolean,
+): { name: string; size: number }[] {
+  const files: { name: string; size: number }[] = []
+  if (!Array.isArray(info.siblings)) return files
   for (const sibling of info.siblings) {
-    if (!sibling.rfilename.endsWith(".safetensors")) continue
-    if (typeof sibling.size === "number" && Number.isFinite(sibling.size)) sum += sibling.size
+    if (!sibling || typeof sibling.rfilename !== "string") continue
+    if (!predicate(sibling.rfilename)) continue
+    const size = asFiniteNumber(sibling.size)
+    if (!size) continue
+    files.push({ name: sibling.rfilename, size })
+  }
+  return files
+}
+
+function modelSizeFromInfo(info: HfModelInfo): ModelSizeInfo | undefined {
+  const safetensors = siblingFiles(info, (name) => name.endsWith(".safetensors"))
+  const safetensorsBytes = safetensors.reduce((sum, file) => sum + file.size, 0)
+  if (safetensorsBytes > 0) return { bytes: safetensorsBytes, source: "safetensors" }
+
+  const gguf = siblingFiles(info, (name) => name.toLowerCase().endsWith(".gguf"))
+  if (gguf.length > 0) {
+    const primary = gguf.reduce((best, file) => (file.size > best.size ? file : best))
+    return { bytes: primary.size, source: "gguf", ggufFilename: primary.name }
+  }
+
+  const used = asFiniteNumber(info.usedStorage)
+  if (used) return { bytes: used, source: "usedStorage" }
+  return undefined
+}
+
+function tensorDtypesFromInfo(info: HfModelInfo): HubTensorDtype[] | undefined {
+  const params = info.safetensors?.parameters
+  if (!isPlainRecord(params)) return undefined
+  const rows: HubTensorDtype[] = []
+  for (const [dtype, count] of Object.entries(params)) {
+    if (typeof dtype !== "string" || !dtype) continue
+    if (typeof count !== "number" || !Number.isFinite(count) || count <= 0) continue
+    rows.push({ dtype: normalizeDtype(dtype), parameterCount: count })
+  }
+  rows.sort((a, b) => b.parameterCount - a.parameterCount)
+  return rows.length > 0 ? rows : undefined
+}
+
+function dtypeFromGgufFilename(filename: string): string | undefined {
+  const match = filename.match(
+    /(?:^|[.\-_])(IQ[1-4](?:_[A-Z0-9]+)*|Q[2-8](?:_[A-Z0-9]+)*|BF16|F16|F32|FP16)(?:[.\-_]|\.gguf$)/i,
+  )
+  return match ? normalizeDtype(match[1]) : undefined
+}
+
+function weightBytesFromDtypes(dtypes: HubTensorDtype[]): number | undefined {
+  let sum = 0
+  for (const row of dtypes) {
+    const width = bytesPerDtype(row.dtype)
+    if (width == null) return undefined
+    sum += row.parameterCount * width
   }
   return sum > 0 ? sum : undefined
+}
+
+function nativeWeightBytes(size: ModelSizeInfo | undefined, dtypes: HubTensorDtype[] | undefined): number | undefined {
+  if (size && (size.source === "safetensors" || size.source === "gguf")) return size.bytes
+  const fromDtypes = dtypes ? weightBytesFromDtypes(dtypes) : undefined
+  if (fromDtypes) return fromDtypes
+  return size?.bytes
+}
+
+function pickConfigNumber(row: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = asFiniteNumber(row[key])
+    if (value != null) return value
+  }
+  return undefined
+}
+
+function kvCacheBytes(cfg: HfConfigExtras, seqLen = KV_CONTEXT_TOKENS): number | undefined {
+  const layers = cfg.numLayers
+  const kvHeads = cfg.numKvHeads ?? cfg.numAttentionHeads
+  const headDim =
+    cfg.headDim ??
+    (cfg.hiddenSize && cfg.numAttentionHeads ? cfg.hiddenSize / cfg.numAttentionHeads : undefined)
+  if (!layers || !kvHeads || !headDim || !Number.isFinite(headDim) || headDim <= 0) return undefined
+  const bytes = 2 * layers * kvHeads * headDim * seqLen * KV_BYTES_PER_ELEM
+  return bytes > 0 ? bytes : undefined
 }
 
 function licenseFromInfo(info: HfModelInfo): string | undefined {
@@ -123,13 +305,39 @@ function licenseFromInfo(info: HfModelInfo): string | undefined {
   return undefined
 }
 
-export function estimateVramGb(parameterCount: number): HubVramEstimate {
-  const weightGb = (bytesPerParam: number) => (parameterCount * bytesPerParam * VRAM_OVERHEAD) / 1e9
-  return {
-    fp16: roundGb(weightGb(2)),
-    int8: roundGb(weightGb(1)),
-    int4: roundGb(weightGb(0.5)),
+export function estimateVramGb(
+  parameterCount: number | undefined,
+  extras?: {
+    nativeWeightBytes?: number
+    nativeDtype?: string
+    kvCache4kBytes?: number
+  },
+): HubVramEstimate | undefined {
+  const estimate: HubVramEstimate = {}
+  if (parameterCount != null) {
+    const weightGb = (bytesPerParam: number) => (parameterCount * bytesPerParam * VRAM_OVERHEAD) / 1e9
+    estimate.fp16 = roundGb(weightGb(2))
+    estimate.int8 = roundGb(weightGb(1))
+    estimate.int4 = roundGb(weightGb(0.5))
   }
+
+  let nativeBytes = extras?.nativeWeightBytes
+  if (nativeBytes == null && extras?.nativeDtype && parameterCount != null) {
+    const width = bytesPerDtype(extras.nativeDtype)
+    if (width != null) nativeBytes = parameterCount * width
+  }
+  if (nativeBytes != null) {
+    estimate.weights = roundGb(nativeBytes / 1e9)
+    estimate.native = roundGb((nativeBytes * VRAM_OVERHEAD) / 1e9)
+    if (extras?.nativeDtype) estimate.nativeDtype = extras.nativeDtype
+  }
+
+  if (extras?.kvCache4kBytes != null) {
+    estimate.kvCache4k = roundGb(extras.kvCache4kBytes / 1e9)
+  }
+
+  if (estimate.fp16 == null && estimate.native == null) return undefined
+  return estimate
 }
 
 function roundGb(value: number): number {
@@ -168,7 +376,10 @@ function errorFromCatch(error: unknown): string {
   return "fetch_failed"
 }
 
-async function fetchJson(url: string, timeoutMs: number): Promise<{ ok: true; json: unknown } | { ok: false; status: number; timedOut: boolean }> {
+async function fetchJson(
+  url: string,
+  timeoutMs: number,
+): Promise<{ ok: true; json: unknown } | { ok: false; status: number; timedOut: boolean }> {
   try {
     const res = await fetch(url, {
       headers: hfHeaders(),
@@ -176,14 +387,33 @@ async function fetchJson(url: string, timeoutMs: number): Promise<{ ok: true; js
       signal: AbortSignal.timeout(timeoutMs),
     })
     if (!res.ok) return { ok: false, status: res.status, timedOut: false }
-    return { ok: true, json: await res.json() }
+    const text = await res.text()
+    if (!text.trim()) return { ok: false, status: res.status, timedOut: false }
+    try {
+      return { ok: true, json: JSON.parse(text) }
+    } catch {
+      return { ok: false, status: res.status, timedOut: false }
+    }
   } catch (error) {
     const timedOut = error instanceof DOMException && error.name === "TimeoutError"
-    return { ok: false, status: timedOut ? 0 : 0, timedOut: timedOut || errorFromCatch(error) === "timeout" }
+    return { ok: false, status: 0, timedOut: timedOut || errorFromCatch(error) === "timeout" }
   }
 }
 
-async function fetchConfigParameterCount(hfId: string): Promise<number | undefined> {
+function configExtrasFromRow(row: Record<string, unknown>): HfConfigExtras {
+  const extras: HfConfigExtras = {}
+  extras.parameterCount = asFiniteNumber(row.num_parameters) ?? asFiniteNumber(row.n_params)
+  const torch = row.torch_dtype ?? row.dtype
+  if (typeof torch === "string" && torch.trim()) extras.torchDtype = normalizeDtype(torch)
+  extras.hiddenSize = pickConfigNumber(row, ["hidden_size", "n_embd", "d_model"])
+  extras.numLayers = pickConfigNumber(row, ["num_hidden_layers", "n_layer", "n_layers", "num_layers"])
+  extras.numAttentionHeads = pickConfigNumber(row, ["num_attention_heads", "n_head", "n_heads", "num_heads"])
+  extras.numKvHeads = pickConfigNumber(row, ["num_key_value_heads", "num_kv_heads", "n_kv_head", "n_kv_heads"])
+  extras.headDim = pickConfigNumber(row, ["head_dim", "head_size"])
+  return extras
+}
+
+async function fetchConfigExtras(hfId: string): Promise<HfConfigExtras | undefined> {
   const url = `https://huggingface.co/${hfId}/raw/main/config.json`
   try {
     const res = await fetch(url, {
@@ -192,10 +422,11 @@ async function fetchConfigParameterCount(hfId: string): Promise<number | undefin
       signal: AbortSignal.timeout(HF_CONFIG_TIMEOUT_MS),
     })
     if (!res.ok) return undefined
-    const json: unknown = await res.json()
-    if (!json || typeof json !== "object") return undefined
-    const row = json as Record<string, unknown>
-    return asFiniteNumber(row.num_parameters) ?? asFiniteNumber(row.n_params)
+    const text = await res.text()
+    if (!text.trim() || text.trimStart().startsWith("<")) return undefined
+    const json: unknown = JSON.parse(text)
+    if (!isPlainRecord(json)) return undefined
+    return configExtrasFromRow(json)
   } catch {
     return undefined
   }
@@ -237,68 +468,133 @@ async function searchHfMapping(model: ModelNode): Promise<HfMapping | undefined>
 
 async function fetchHubMetadata(mapping: HfMapping, fetchedAt: string): Promise<HubDetail> {
   const detail = baseDetail(mapping, fetchedAt)
-  const apiUrl = `https://huggingface.co/api/models/${mapping.hfId}?expand=safetensors,cardData,gguf`
-  const result = await fetchJson(apiUrl, HF_API_TIMEOUT_MS)
+  try {
+    const result = await fetchJson(hfModelInfoUrl(mapping.hfId), HF_API_TIMEOUT_MS)
 
-  if (!result.ok) {
-    const error = errorFromStatus(result.status, result.timedOut)
-    return {
-      ...detail,
-      gated: error === "gated" ? true : detail.gated,
-      error,
+    if (!result.ok) {
+      const error = errorFromStatus(result.status, result.timedOut)
+      console.error("[v0] Hugging Face model info failed:", mapping.hfId, error, result.status || "")
+      return {
+        ...detail,
+        gated: error === "gated" ? true : detail.gated,
+        error,
+      }
     }
-  }
 
-  const info = (result.json ?? {}) as HfModelInfo
-  const gated = isGatedFlag(info.gated)
-  let parameterCount = parameterCountFromInfo(info)
-  if (parameterCount == null) {
-    parameterCount = await fetchConfigParameterCount(mapping.hfId)
-  }
+    if (!isPlainRecord(result.json)) {
+      return { ...detail, error: "fetch_failed" }
+    }
 
-  const resolvedId = typeof info.id === "string" && info.id ? info.id : mapping.hfId
-  const next: HubDetail = {
-    ...detail,
-    hfId: resolvedId,
-    modelUrl: `https://huggingface.co/${resolvedId}`,
-    gated,
-    pipelineTag: typeof info.pipeline_tag === "string" ? info.pipeline_tag : undefined,
-    tags: Array.isArray(info.tags) ? info.tags.filter((tag): tag is string => typeof tag === "string").slice(0, 24) : undefined,
-  }
+    const info = result.json as HfModelInfo
+    const gated = isGatedFlag(info.gated)
+    const size = modelSizeFromInfo(info)
+    const tensorDtypes = tensorDtypesFromInfo(info)
+    let parameterCount = parameterCountFromInfo(info)
+    let torchDtype: string | undefined
+    let kvBytes: number | undefined
 
-  const license = licenseFromInfo(info)
-  if (license) next.license = license
-  if (parameterCount != null) {
-    next.parameterCount = parameterCount
-    next.vramEstimate = estimateVramGb(parameterCount)
-  }
-  const bytes = safetensorsBytesFromInfo(info)
-  if (bytes != null) next.safetensorsBytes = bytes
+    if (parameterCount == null || tensorDtypes == null) {
+      const config = await fetchConfigExtras(mapping.hfId)
+      if (config) {
+        if (parameterCount == null) parameterCount = config.parameterCount
+        torchDtype = config.torchDtype
+        kvBytes = kvCacheBytes(config)
+      }
+    }
 
-  if (gated && !hfToken() && parameterCount == null && !license) {
-    next.error = "gated"
-  }
+    const primaryDtype =
+      tensorDtypes?.[0]?.dtype ??
+      torchDtype ??
+      (size?.ggufFilename ? dtypeFromGgufFilename(size.ggufFilename) : undefined)
+    const nativeBytes = nativeWeightBytes(size, tensorDtypes)
 
-  return next
+    const resolvedId = typeof info.id === "string" && info.id ? info.id : mapping.hfId
+    const next: HubDetail = {
+      ...detail,
+      hfId: resolvedId,
+      modelUrl: `https://huggingface.co/${resolvedId}`,
+      gated,
+      pipelineTag: typeof info.pipeline_tag === "string" ? info.pipeline_tag : undefined,
+      tags: Array.isArray(info.tags)
+        ? info.tags.filter((tag): tag is string => typeof tag === "string").slice(0, 24)
+        : undefined,
+    }
+
+    const license = licenseFromInfo(info)
+    if (license) next.license = license
+    if (parameterCount != null) next.parameterCount = parameterCount
+    if (size) {
+      next.modelSizeBytes = size.bytes
+      next.modelSizeSource = size.source
+      if (size.source === "safetensors") next.safetensorsBytes = size.bytes
+    }
+    if (tensorDtypes) next.tensorDtypes = tensorDtypes
+    if (primaryDtype) next.primaryDtype = primaryDtype
+    if (torchDtype) next.torchDtype = torchDtype
+
+    const vram = estimateVramGb(parameterCount, {
+      nativeWeightBytes: nativeBytes,
+      nativeDtype: primaryDtype,
+      kvCache4kBytes: kvBytes,
+    })
+    if (vram) next.vramEstimate = vram
+
+    if (gated && !hfToken() && parameterCount == null && !license && !size) {
+      next.error = "gated"
+    }
+
+    return next
+  } catch (error) {
+    console.error("[v0] Hugging Face model info threw:", mapping.hfId, error)
+    return { ...detail, error: errorFromCatch(error) }
+  }
+}
+
+function reusableHubDetail(detail: HubDetail | undefined, force: boolean): HubDetail | undefined {
+  if (force || !detail) return undefined
+  const fetched = Date.parse(detail.fetchedAt)
+  if (!Number.isFinite(fetched) || Date.now() - fetched > HUB_FRESH_MS) return undefined
+  if (detail.error === "timeout" || detail.error === "rate_limited" || detail.error === "fetch_failed") {
+    return undefined
+  }
+  if (detail.error) return detail
+  if (detail.modelSizeBytes != null || detail.primaryDtype != null || detail.parameterCount != null) return detail
+  return undefined
 }
 
 async function fetchHubDetail(model: ModelNode, existing?: HubDetail): Promise<HubDetail> {
   const fetchedAt = new Date().toISOString()
-  const curated = resolveHfMapping(model)
-  const cached = curated ? undefined : mappingFromHubCache(existing)
-  const guesses = curated ? [] : guessHfMappings(model).filter((row) => row.hfId !== cached?.hfId)
-  const toTry = [curated, cached, ...guesses].filter((row): row is HfMapping => row != null)
+  try {
+    const curated = resolveHfMapping(model)
+    const cached = curated ? undefined : mappingFromHubCache(existing)
+    const guesses = curated ? [] : guessHfMappings(model).filter((row) => row.hfId !== cached?.hfId)
+    const toTry = [curated, cached, ...guesses].filter((row): row is HfMapping => row != null)
 
-  let mappedDetail: HubDetail | undefined
-  for (const mapping of toTry) {
-    mappedDetail = await fetchHubMetadata(mapping, fetchedAt)
-    if (mappedDetail.error !== "not_found") return mappedDetail
+    let mappedDetail: HubDetail | undefined
+    for (const mapping of toTry) {
+      mappedDetail = await fetchHubMetadata(mapping, fetchedAt)
+      if (mappedDetail.error !== "not_found") return mappedDetail
+    }
+
+    const searched = await searchHfMapping(model)
+    if (!searched) return mappedDetail ?? { fetchedAt, error: "unmapped" }
+    if (toTry.some((row) => row.hfId === searched.hfId)) return mappedDetail ?? { fetchedAt, error: "unmapped" }
+    return fetchHubMetadata(searched, fetchedAt)
+  } catch (error) {
+    console.error("[v0] Hub detail refresh threw for model:", model.id, error)
+    return {
+      ...(existing?.hfId
+        ? {
+            hfId: existing.hfId,
+            modelUrl: existing.modelUrl,
+            serving: existing.serving,
+            officialUrl: existing.officialUrl,
+          }
+        : {}),
+      fetchedAt,
+      error: errorFromCatch(error),
+    }
   }
-
-  const searched = await searchHfMapping(model)
-  if (!searched) return mappedDetail ?? { fetchedAt, error: "unmapped" }
-  if (toTry.some((row) => row.hfId === searched.hfId)) return mappedDetail ?? { fetchedAt, error: "unmapped" }
-  return fetchHubMetadata(searched, fetchedAt)
 }
 
 function statsFor(details: HubDetail[]): HubRefreshStats {
@@ -330,18 +626,32 @@ export async function refreshHubDetails(options?: { modelId?: string }): Promise
   }
 
   const existing = await readHubSnapshot()
-  const details = await mapPool(targets, HUB_CONCURRENCY, (model) =>
-    fetchHubDetail(model, existing?.models[model.id]),
-  )
+  const force = Boolean(options?.modelId)
+  let fetchedCount = 0
+  const details = await mapPool(targets, HUB_CONCURRENCY, async (model) => {
+    const previous = existing?.models[model.id]
+    const reusable = reusableHubDetail(previous, force)
+    if (reusable) return reusable
+    fetchedCount += 1
+    return fetchHubDetail(model, previous)
+  })
   const models = { ...(existing?.models ?? {}) }
   for (let i = 0; i < targets.length; i++) {
     models[targets[i].id] = details[i]
   }
 
-  const snapshot = await writeHubSnapshot({
-    fetchedAt: new Date().toISOString(),
-    models,
-  })
+  if (fetchedCount === 0 && existing) {
+    return { snapshot: existing, stats: statsFor(details) }
+  }
 
-  return { snapshot, stats: statsFor(details) }
+  try {
+    const snapshot = await writeHubSnapshot({
+      fetchedAt: new Date().toISOString(),
+      models,
+    })
+    return { snapshot, stats: statsFor(details) }
+  } catch (error) {
+    console.error("[v0] Failed to write hub snapshot to Blob:", error)
+    throw new HubRefreshError("HUB_STORE_FAILED")
+  }
 }

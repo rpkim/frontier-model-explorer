@@ -1,5 +1,12 @@
 import { get, put } from "@vercel/blob"
-import type { HubDetail, HubSnapshot, HubServingLinks, HubVramEstimate } from "./types"
+import type {
+  HubDetail,
+  HubModelSizeSource,
+  HubSnapshot,
+  HubServingLinks,
+  HubTensorDtype,
+  HubVramEstimate,
+} from "./types"
 
 export const HUB_SNAPSHOT_PATHNAME = "frontier-models/hub/latest.json"
 
@@ -16,13 +23,45 @@ function parseServing(value: unknown): HubServingLinks | undefined {
   return Object.keys(serving).length > 0 ? serving : undefined
 }
 
+function parseOptionalGb(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
 function parseVram(value: unknown): HubVramEstimate | undefined {
   if (!isRecord(value)) return undefined
-  if (typeof value.fp16 !== "number" || typeof value.int8 !== "number" || typeof value.int4 !== "number") {
-    return undefined
+  const fp16 = parseOptionalGb(value.fp16)
+  const int8 = parseOptionalGb(value.int8)
+  const int4 = parseOptionalGb(value.int4)
+  const weights = parseOptionalGb(value.weights)
+  const native = parseOptionalGb(value.native)
+  const kvCache4k = parseOptionalGb(value.kvCache4k)
+  const nativeDtype = typeof value.nativeDtype === "string" && value.nativeDtype ? value.nativeDtype : undefined
+  const hasQuant = fp16 != null && int8 != null && int4 != null
+  if (!hasQuant && native == null) return undefined
+  const estimate: HubVramEstimate = {}
+  if (fp16 != null) estimate.fp16 = fp16
+  if (int8 != null) estimate.int8 = int8
+  if (int4 != null) estimate.int4 = int4
+  if (weights != null) estimate.weights = weights
+  if (native != null) estimate.native = native
+  if (nativeDtype) estimate.nativeDtype = nativeDtype
+  if (kvCache4k != null) estimate.kvCache4k = kvCache4k
+  return estimate
+}
+
+const SIZE_SOURCES = new Set<HubModelSizeSource>(["safetensors", "gguf", "usedStorage"])
+
+function parseTensorDtypes(value: unknown): HubTensorDtype[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const rows: HubTensorDtype[] = []
+  for (const item of value) {
+    if (!isRecord(item) || typeof item.dtype !== "string" || !item.dtype) continue
+    if (typeof item.parameterCount !== "number" || !Number.isFinite(item.parameterCount) || item.parameterCount <= 0) {
+      continue
+    }
+    rows.push({ dtype: item.dtype, parameterCount: item.parameterCount })
   }
-  if (![value.fp16, value.int8, value.int4].every(Number.isFinite)) return undefined
-  return { fp16: value.fp16, int8: value.int8, int4: value.int4 }
+  return rows.length > 0 ? rows : undefined
 }
 
 function parseHubDetail(value: unknown): HubDetail | null {
@@ -38,9 +77,19 @@ function parseHubDetail(value: unknown): HubDetail | null {
   if (typeof value.parameterCount === "number" && Number.isFinite(value.parameterCount)) {
     detail.parameterCount = value.parameterCount
   }
+  if (typeof value.modelSizeBytes === "number" && Number.isFinite(value.modelSizeBytes) && value.modelSizeBytes > 0) {
+    detail.modelSizeBytes = value.modelSizeBytes
+  }
   if (typeof value.safetensorsBytes === "number" && Number.isFinite(value.safetensorsBytes)) {
     detail.safetensorsBytes = value.safetensorsBytes
   }
+  if (typeof value.modelSizeSource === "string" && SIZE_SOURCES.has(value.modelSizeSource as HubModelSizeSource)) {
+    detail.modelSizeSource = value.modelSizeSource as HubModelSizeSource
+  }
+  const tensorDtypes = parseTensorDtypes(value.tensorDtypes)
+  if (tensorDtypes) detail.tensorDtypes = tensorDtypes
+  if (typeof value.primaryDtype === "string" && value.primaryDtype) detail.primaryDtype = value.primaryDtype
+  if (typeof value.torchDtype === "string" && value.torchDtype) detail.torchDtype = value.torchDtype
   if (typeof value.pipelineTag === "string") detail.pipelineTag = value.pipelineTag
   if (tags && tags.length > 0) detail.tags = tags
   if (typeof value.officialUrl === "string") detail.officialUrl = value.officialUrl

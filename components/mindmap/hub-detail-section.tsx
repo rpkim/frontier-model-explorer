@@ -6,7 +6,9 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { HubRefreshButton } from "@/components/explorer/hub-refresh-button"
-import { formatGb, formatParams, timeAgo } from "@/lib/aa/format"
+import { ComputeGuideButton } from "@/components/guide/compute-guide-button"
+import { formatBytesGb, formatGb, formatParams, timeAgo } from "@/lib/aa/format"
+import { hasUsableHubDetail } from "@/lib/aa/guide"
 import type { HubDetail } from "@/lib/aa/types"
 import { useI18n } from "@/lib/i18n/provider"
 import type { TFunction } from "@/lib/i18n/translate"
@@ -101,7 +103,31 @@ export function HubDetailSection({
   }
 
   const errorText = hubErrorMessage(detail.error, t)
-  const hasMetrics = detail.parameterCount != null || detail.license || detail.gated != null || detail.vramEstimate
+  const otherDtypes = (detail.tensorDtypes ?? [])
+    .map((row) => row.dtype)
+    .filter((dtype) => dtype !== detail.primaryDtype)
+  const uniqueOthers = [...new Set(otherDtypes)]
+  const dtypeSub = uniqueOthers.length > 0 ? t("hub.tensorTypeMixed", { others: uniqueOthers.join(", ") }) : undefined
+  const sizeSub =
+    detail.modelSizeSource === "gguf"
+      ? t("hub.modelSizeGguf")
+      : detail.modelSizeSource === "usedStorage"
+        ? t("hub.modelSizeRepo")
+        : detail.modelSizeBytes != null
+          ? t("hub.modelSizeSub")
+          : undefined
+  const nativeLabel = detail.vramEstimate?.nativeDtype
+    ? t("hub.minGpuNative", { dtype: detail.vramEstimate.nativeDtype })
+    : t("hub.minGpu")
+  const hasQuant =
+    detail.vramEstimate?.fp16 != null && detail.vramEstimate.int8 != null && detail.vramEstimate.int4 != null
+  const hasMetrics =
+    detail.parameterCount != null ||
+    detail.modelSizeBytes != null ||
+    detail.primaryDtype != null ||
+    detail.license ||
+    detail.gated != null ||
+    detail.vramEstimate
 
   return (
     <section className="flex flex-col gap-3">
@@ -118,6 +144,12 @@ export function HubDetailSection({
       {hasMetrics && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <MetricCard label={t("hub.parameters")} value={formatParams(detail.parameterCount)} />
+          {detail.modelSizeBytes != null && (
+            <MetricCard label={t("hub.modelSize")} value={formatBytesGb(detail.modelSizeBytes)} sub={sizeSub} />
+          )}
+          {detail.primaryDtype && (
+            <MetricCard label={t("hub.tensorType")} value={detail.primaryDtype} sub={dtypeSub} />
+          )}
           <MetricCard
             label={t("hub.license")}
             value={detail.license ?? t("hub.unknownLicense")}
@@ -133,15 +165,40 @@ export function HubDetailSection({
         </div>
       )}
 
-      {detail.vramEstimate && (
+      {(detail.vramEstimate || hasMetrics) && (
         <div>
-          <h4 className="mb-2 text-xs font-medium text-muted-foreground">{t("hub.vramTitle")}</h4>
-          <div className="grid grid-cols-3 gap-2">
-            <MetricCard label={t("hub.fp16")} value={formatGb(detail.vramEstimate.fp16)} />
-            <MetricCard label={t("hub.int8")} value={formatGb(detail.vramEstimate.int8)} />
-            <MetricCard label={t("hub.int4")} value={formatGb(detail.vramEstimate.int4)} />
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-xs font-medium text-muted-foreground">{t("hub.minRequired")}</h4>
+            <ComputeGuideButton modelId={modelId} disabled={!hasUsableHubDetail(detail)} />
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">{t("hub.vramHint")}</p>
+          {(detail.vramEstimate?.native != null || hasQuant) && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {detail.vramEstimate?.native != null && (
+                <MetricCard
+                  label={nativeLabel}
+                  value={formatGb(detail.vramEstimate.native)}
+                  sub={
+                    detail.vramEstimate.kvCache4k != null
+                      ? t("hub.kvCacheLine", { size: formatGb(detail.vramEstimate.kvCache4k) })
+                      : t("hub.minGpuSub")
+                  }
+                />
+              )}
+              {hasQuant && detail.vramEstimate && (
+                <>
+                  <MetricCard label={t("hub.fp16")} value={formatGb(detail.vramEstimate.fp16)} />
+                  <MetricCard label={t("hub.int8")} value={formatGb(detail.vramEstimate.int8)} />
+                  <MetricCard label={t("hub.int4")} value={formatGb(detail.vramEstimate.int4)} />
+                </>
+              )}
+            </div>
+          )}
+          {detail.vramEstimate && (
+            <p className="mt-2 text-xs text-muted-foreground">{t("hub.vramHint")}</p>
+          )}
+          {detail.modelSizeSource === "gguf" && (
+            <p className="mt-1 text-xs text-muted-foreground">{t("hub.ggufRamHint")}</p>
+          )}
         </div>
       )}
 
