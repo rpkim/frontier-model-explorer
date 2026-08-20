@@ -1,20 +1,23 @@
 import type { ModelNode } from "./types"
+import type { MessageKey } from "@/lib/i18n/translate"
 
 export type GroupByKey = "provider" | "intelligence" | "price" | "speed" | "release"
 
-export const GROUP_BY_OPTIONS: { key: GroupByKey; label: string; description: string }[] = [
-  { key: "provider", label: "제공사", description: "모델을 만든 회사 기준" },
-  { key: "intelligence", label: "성능", description: "Intelligence Index 점수대 기준" },
-  { key: "price", label: "가격", description: "1M 토큰당 비용 기준" },
-  { key: "speed", label: "속도", description: "초당 처리 토큰 수 기준" },
-  { key: "release", label: "출시일", description: "출시 시점 기준" },
+export const GROUP_BY_OPTIONS: { key: GroupByKey; labelKey: MessageKey; hintKey: MessageKey }[] = [
+  { key: "provider", labelKey: "groupBy.provider", hintKey: "groupBy.providerHint" },
+  { key: "intelligence", labelKey: "groupBy.intelligence", hintKey: "groupBy.intelligenceHint" },
+  { key: "price", labelKey: "groupBy.price", hintKey: "groupBy.priceHint" },
+  { key: "speed", labelKey: "groupBy.speed", hintKey: "groupBy.speedHint" },
+  { key: "release", labelKey: "groupBy.release", hintKey: "groupBy.releaseHint" },
 ]
 
 export interface Group {
   /** Stable identifier used in the URL and as a React key */
   id: string
-  /** Short label shown on the node */
+  /** Short label shown on the node when `labelKey` is not set (e.g. provider name) */
   label: string
+  /** i18n key; when set, the UI translates this instead of showing `label` */
+  labelKey?: MessageKey
   /** Optional secondary label, e.g. a score range */
   sublabel?: string
   models: ModelNode[]
@@ -48,6 +51,7 @@ export function groupByProvider(models: ModelNode[]): Group[] {
 interface Bucket {
   id: string
   label: string
+  labelKey?: MessageKey
   order: number
   test: (m: ModelNode) => boolean
 }
@@ -56,6 +60,7 @@ function bucketGroups(models: ModelNode[], buckets: Bucket[]): Group[] {
   const groups: Group[] = buckets.map((b) => ({
     id: b.id,
     label: b.label,
+    labelKey: b.labelKey,
     models: [],
     order: b.order,
   }))
@@ -67,86 +72,83 @@ function bucketGroups(models: ModelNode[], buckets: Bucket[]): Group[] {
 }
 
 export function groupByIntelligence(models: ModelNode[]): Group[] {
-  const tiers: [number, string][] = [
-    [60, "60+ · 최상위권"],
-    [50, "50–59"],
-    [40, "40–49"],
-    [30, "30–39"],
-    [20, "20–29"],
-    [10, "10–19"],
-    [0, "0–9"],
+  const tiers: { min: number; labelKey: MessageKey }[] = [
+    { min: 60, labelKey: "groups.intel60" },
+    { min: 50, labelKey: "groups.intel50" },
+    { min: 40, labelKey: "groups.intel40" },
+    { min: 30, labelKey: "groups.intel30" },
+    { min: 20, labelKey: "groups.intel20" },
+    { min: 10, labelKey: "groups.intel10" },
+    { min: 0, labelKey: "groups.intel0" },
   ]
-  const buckets: Bucket[] = tiers.map(([min, label], i) => ({
+  const buckets: Bucket[] = tiers.map(({ min, labelKey }, i) => ({
     id: `intel-${min}`,
-    label,
+    label: labelKey,
+    labelKey,
     order: i,
     test: (m) => m.intelligenceIndex !== null && m.intelligenceIndex >= min,
   }))
   buckets.push({
     id: "intel-unknown",
-    label: "점수 없음",
+    label: "groups.intelUnknown",
+    labelKey: "groups.intelUnknown",
     order: UNKNOWN_ORDER,
     test: () => true,
   })
-  return bucketGroups(models, buckets).map((g) => ({
-    ...g,
-    models: g.models.sort((a, b) => (b.intelligenceIndex ?? -1) - (a.intelligenceIndex ?? -1)),
-  }))
+  return bucketGroups(models, buckets)
 }
 
 export function groupByPrice(models: ModelNode[]): Group[] {
-  const tiers: [number, string][] = [
-    [0, "$0.5 미만 · 초저가"],
-    [0.5, "$0.5 – $2"],
-    [2, "$2 – $5"],
-    [5, "$5 – $15"],
-    [15, "$15 – $50"],
-    [50, "$50 이상 · 최고가"],
+  const tiers: { min: number; labelKey: MessageKey }[] = [
+    { min: 0, labelKey: "groups.price0" },
+    { min: 0.5, labelKey: "groups.price05" },
+    { min: 2, labelKey: "groups.price2" },
+    { min: 5, labelKey: "groups.price5" },
+    { min: 15, labelKey: "groups.price15" },
+    { min: 50, labelKey: "groups.price50" },
   ]
   const buckets: Bucket[] = tiers
-    .map(([min, label], i) => ({
+    .map(({ min, labelKey }, i) => ({
       id: `price-${min}`,
-      label,
+      label: labelKey,
+      labelKey,
       order: i,
       test: (m: ModelNode) => m.priceBlendedPerM !== null && m.priceBlendedPerM >= min,
     }))
     .reverse() // check highest threshold first
   buckets.push({
     id: "price-unknown",
-    label: "가격 정보 없음",
+    label: "groups.priceUnknown",
+    labelKey: "groups.priceUnknown",
     order: UNKNOWN_ORDER,
     test: () => true,
   })
-  return bucketGroups(models, buckets).map((g) => ({
-    ...g,
-    models: g.models.sort((a, b) => (a.priceBlendedPerM ?? Infinity) - (b.priceBlendedPerM ?? Infinity)),
-  }))
+  return bucketGroups(models, buckets)
 }
 
 export function groupBySpeed(models: ModelNode[]): Group[] {
-  const tiers: [number, string][] = [
-    [600, "600+ tok/s · 초고속"],
-    [300, "300–599 tok/s"],
-    [150, "150–299 tok/s"],
-    [75, "75–149 tok/s"],
-    [0, "75 tok/s 미만"],
+  const tiers: { min: number; labelKey: MessageKey }[] = [
+    { min: 600, labelKey: "groups.speed600" },
+    { min: 300, labelKey: "groups.speed300" },
+    { min: 150, labelKey: "groups.speed150" },
+    { min: 75, labelKey: "groups.speed75" },
+    { min: 0, labelKey: "groups.speed0" },
   ]
-  const buckets: Bucket[] = tiers.map(([min, label], i) => ({
+  const buckets: Bucket[] = tiers.map(({ min, labelKey }, i) => ({
     id: `speed-${min}`,
-    label,
+    label: labelKey,
+    labelKey,
     order: i,
     test: (m) => m.outputTokensPerSecond !== null && m.outputTokensPerSecond >= min,
   }))
   buckets.push({
     id: "speed-unknown",
-    label: "속도 정보 없음",
+    label: "groups.speedUnknown",
+    labelKey: "groups.speedUnknown",
     order: UNKNOWN_ORDER,
     test: () => true,
   })
-  return bucketGroups(models, buckets).map((g) => ({
-    ...g,
-    models: g.models.sort((a, b) => (b.outputTokensPerSecond ?? -1) - (a.outputTokensPerSecond ?? -1)),
-  }))
+  return bucketGroups(models, buckets)
 }
 
 function quarterOf(dateStr: string): { key: string; label: string; sortKey: number } {
@@ -172,11 +174,17 @@ export function groupByRelease(models: ModelNode[]): Group[] {
   const groups: Group[] = Array.from(map.entries()).map(([key, entry]) => ({
     id: key,
     label: entry.label,
-    models: entry.models.sort((a, b) => (b.releaseDate ?? "").localeCompare(a.releaseDate ?? "")),
+    models: entry.models,
     order: -entry.sortKey, // most recent first
   }))
   if (unknown.length > 0) {
-    groups.push({ id: "release-unknown", label: "출시일 미정", models: unknown, order: UNKNOWN_ORDER })
+    groups.push({
+      id: "release-unknown",
+      label: "groups.releaseUnknown",
+      labelKey: "groups.releaseUnknown",
+      models: unknown,
+      order: UNKNOWN_ORDER,
+    })
   }
   return sortGroups(groups)
 }
@@ -197,22 +205,25 @@ export function groupModels(by: GroupByKey, models: ModelNode[]): Group[] {
 }
 
 /** The metric value + formatted label to emphasize on a model card for a given grouping axis. */
-export function highlightMetricFor(by: GroupByKey, model: ModelNode): { label: string; value: string } | null {
+export function highlightMetricFor(
+  by: GroupByKey,
+  model: ModelNode,
+): { labelKey: MessageKey; value: string } | null {
   switch (by) {
     case "intelligence":
       return model.intelligenceIndex !== null
-        ? { label: "Intelligence Index", value: model.intelligenceIndex.toFixed(1) }
+        ? { labelKey: "highlight.intelligenceIndex", value: model.intelligenceIndex.toFixed(1) }
         : null
     case "price":
       return model.priceBlendedPerM !== null
-        ? { label: "블렌디드 가격", value: `$${model.priceBlendedPerM.toFixed(2)}/1M` }
+        ? { labelKey: "highlight.blendedPrice", value: `$${model.priceBlendedPerM.toFixed(2)}/1M` }
         : null
     case "speed":
       return model.outputTokensPerSecond !== null
-        ? { label: "출력 속도", value: `${model.outputTokensPerSecond.toFixed(0)} tok/s` }
+        ? { labelKey: "highlight.outputSpeed", value: `${model.outputTokensPerSecond.toFixed(0)} tok/s` }
         : null
     case "release":
-      return model.releaseDate ? { label: "출시일", value: model.releaseDate } : null
+      return model.releaseDate ? { labelKey: "highlight.releaseDate", value: model.releaseDate } : null
     case "provider":
       return null
   }

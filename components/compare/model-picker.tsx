@@ -14,6 +14,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { colorForKey } from "@/lib/aa/colors"
 import type { ModelNode } from "@/lib/aa/types"
+import { useI18n } from "@/lib/i18n/provider"
 
 export function ModelPicker({
   models,
@@ -27,6 +28,7 @@ export function ModelPicker({
   disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const { t } = useI18n()
   const available = models.filter((m) => !excludeIds.includes(m.id))
 
   return (
@@ -40,7 +42,7 @@ export function ModelPicker({
           >
             <span className="flex items-center gap-2 text-muted-foreground">
               <PlusIcon data-icon="inline-start" />
-              모델 추가
+              {t("compare.addModel")}
             </span>
             <ChevronsUpDownIcon className="size-4 shrink-0 opacity-50" />
           </Button>
@@ -48,9 +50,9 @@ export function ModelPicker({
       />
       <PopoverContent className="w-72 p-0" align="start">
         <Command>
-          <CommandInput placeholder="모델 검색..." />
+          <CommandInput placeholder={t("compare.searchPlaceholder")} />
           <CommandList>
-            <CommandEmpty>모델을 찾을 수 없습니다.</CommandEmpty>
+            <CommandEmpty>{t("compare.notFound")}</CommandEmpty>
             <CommandGroup>
               {available.map((model) => (
                 <CommandItem

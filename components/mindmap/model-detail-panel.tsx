@@ -6,8 +6,11 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { colorForKey } from "@/lib/aa/colors"
 import { formatDate, formatPrice, formatScore, formatSeconds, formatSpeed } from "@/lib/aa/format"
-import { BENCHMARK_LABELS, type ModelNode } from "@/lib/aa/types"
+import { isOpenWeight } from "@/lib/aa/filter"
+import { BENCHMARK_LABELS, type HubDetail, type HubSnapshot, type ModelNode } from "@/lib/aa/types"
 import { ParetoScatter } from "@/components/charts/pareto-scatter"
+import { HubDetailSection } from "@/components/mindmap/hub-detail-section"
+import { useI18n } from "@/lib/i18n/provider"
 
 function MetricCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -37,13 +40,18 @@ function BenchmarkBar({ label, value }: { label: string; value: number }) {
 export function ModelDetailPanel({
   model,
   allModels,
+  hub,
   onAddToCompare,
 }: {
   model: ModelNode
   allModels: ModelNode[]
+  hub: HubSnapshot | null
   onAddToCompare?: (id: string) => void
 }) {
+  const { t, locale } = useI18n()
   const benchmarkEntries = Object.entries(model.benchmarks) as [keyof typeof BENCHMARK_LABELS, number][]
+  const open = isOpenWeight(model)
+  const hubDetail: HubDetail | null = hub?.models[model.id] ?? null
 
   return (
     <div className="flex h-full min-w-80 flex-1 flex-col overflow-y-auto">
@@ -62,12 +70,12 @@ export function ModelDetailPanel({
           </div>
           <div className="flex shrink-0 flex-col items-end gap-2">
             <Badge variant="outline" className="font-mono text-xs">
-              {formatDate(model.releaseDate)}
+              {formatDate(model.releaseDate, locale, t("format.unknownDate"))}
             </Badge>
             {onAddToCompare && (
               <Button size="sm" variant="outline" onClick={() => onAddToCompare(model.id)}>
                 <PlusCircleIcon data-icon="inline-start" />
-                비교에 추가
+                {t("detail.addToCompare")}
               </Button>
             )}
           </div>
@@ -76,22 +84,38 @@ export function ModelDetailPanel({
 
       <div className="flex flex-col gap-5 px-4 py-4 sm:px-5">
         <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <MetricCard label="Intelligence Index" value={formatScore(model.intelligenceIndex)} />
-          <MetricCard label="Coding Index" value={formatScore(model.codingIndex)} />
-          <MetricCard label="Math Index" value={formatScore(model.mathIndex)} />
-          <MetricCard label="블렌디드 가격" value={formatPrice(model.priceBlendedPerM)} sub="/1M 토큰" />
+          <MetricCard label={t("detail.intelligenceIndex")} value={formatScore(model.intelligenceIndex)} />
+          <MetricCard label={t("detail.codingIndex")} value={formatScore(model.codingIndex)} />
+          <MetricCard label={t("detail.mathIndex")} value={formatScore(model.mathIndex)} />
+          <MetricCard
+            label={t("detail.blendedPrice")}
+            value={formatPrice(model.priceBlendedPerM)}
+            sub={t("detail.perMillionTokens")}
+          />
         </section>
 
         <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <MetricCard label="입력 가격" value={formatPrice(model.priceInputPerM)} sub="/1M 토큰" />
-          <MetricCard label="출력 가격" value={formatPrice(model.priceOutputPerM)} sub="/1M 토큰" />
-          <MetricCard label="출력 속도" value={formatSpeed(model.outputTokensPerSecond)} />
-          <MetricCard label="TTFT" value={formatSeconds(model.timeToFirstTokenSeconds)} sub="첫 토큰까지" />
+          <MetricCard
+            label={t("detail.inputPrice")}
+            value={formatPrice(model.priceInputPerM)}
+            sub={t("detail.perMillionTokens")}
+          />
+          <MetricCard
+            label={t("detail.outputPrice")}
+            value={formatPrice(model.priceOutputPerM)}
+            sub={t("detail.perMillionTokens")}
+          />
+          <MetricCard label={t("detail.outputSpeed")} value={formatSpeed(model.outputTokensPerSecond)} />
+          <MetricCard
+            label={t("detail.ttft")}
+            value={formatSeconds(model.timeToFirstTokenSeconds)}
+            sub={t("detail.ttftHint")}
+          />
         </section>
 
         {benchmarkEntries.length > 0 && (
           <section>
-            <h3 className="mb-2.5 text-xs font-medium text-muted-foreground">벤치마크 점수</h3>
+            <h3 className="mb-2.5 text-xs font-medium text-muted-foreground">{t("detail.benchmarks")}</h3>
             <div className="flex flex-col gap-2">
               {benchmarkEntries.map(([key, value]) => (
                 <BenchmarkBar key={key} label={BENCHMARK_LABELS[key]} value={value} />
@@ -102,13 +126,21 @@ export function ModelDetailPanel({
 
         <Separator />
 
+        {open ? (
+          <HubDetailSection modelId={model.id} detail={hubDetail} hubFetchedAt={hub?.fetchedAt ?? null} />
+        ) : (
+          <p className="text-xs text-muted-foreground">{t("hub.notOpen")}</p>
+        )}
+
+        <Separator />
+
         <section>
-          <h3 className="mb-1 text-xs font-medium text-muted-foreground">Pareto 포지션 · 지능 대비 가격</h3>
+          <h3 className="mb-1 text-xs font-medium text-muted-foreground">{t("detail.paretoPrice")}</h3>
           <ParetoScatter models={allModels} xMetric="price" highlightIds={[model.id]} />
         </section>
 
         <section>
-          <h3 className="mb-1 text-xs font-medium text-muted-foreground">Pareto 포지션 · 지능 대비 속도</h3>
+          <h3 className="mb-1 text-xs font-medium text-muted-foreground">{t("detail.paretoSpeed")}</h3>
           <ParetoScatter models={allModels} xMetric="speed" highlightIds={[model.id]} />
         </section>
       </div>

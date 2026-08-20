@@ -120,3 +120,48 @@ export interface Snapshot {
   syncedAt: string
   models: ModelNode[]
 }
+
+/** Hugging Face / local-serving enrichment, stored separately from the AA index. */
+export interface HubServingLinks {
+  vllm?: string
+  sglang?: string
+  ollama?: string
+}
+
+export interface HubVramEstimate {
+  /** Estimated GB (weights × dtype bytes + ~20% overhead). */
+  fp16: number
+  int8: number
+  int4: number
+}
+
+export interface HubDetail {
+  hfId?: string
+  modelUrl?: string
+  license?: string
+  gated?: boolean
+  parameterCount?: number
+  safetensorsBytes?: number
+  pipelineTag?: string
+  tags?: string[]
+  officialUrl?: string
+  serving?: HubServingLinks
+  vramEstimate?: HubVramEstimate
+  /** Machine-readable status: unmapped (no HF id found) | gated | not_found | timeout | rate_limited | fetch_failed */
+  error?: string
+  fetchedAt: string
+}
+
+export interface HubSnapshot {
+  fetchedAt: string
+  models: Record<string, HubDetail>
+}
+
+export interface CatalogReport {
+  generatedAt: string
+  locale: string
+  markdown: string
+  modelCount: number
+  model: string
+  snapshotSyncedAt: string
+}

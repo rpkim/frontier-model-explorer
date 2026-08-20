@@ -2,25 +2,43 @@
 
 import { useMemo } from "react"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
-import { ScaleIcon } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { FunnelIcon, ScaleIcon } from "lucide-react"
 import { useQueryState } from "@/hooks/use-query-state"
+import { EMPTY_FILTERS, serializeCatalogFilters } from "@/lib/aa/filter"
 import type { ModelNode } from "@/lib/aa/types"
 import { ModelPicker } from "@/components/compare/model-picker"
 import { CompareTable } from "@/components/compare/compare-table"
 import { ParetoScatter } from "@/components/charts/pareto-scatter"
+import { useI18n } from "@/lib/i18n/provider"
 
 const MAX_MODELS = 4
 
-export function CompareExplorer({ models }: { models: ModelNode[] }) {
+export function CompareExplorer({
+  models,
+  catalog,
+}: {
+  models: ModelNode[]
+  catalog: ModelNode[]
+}) {
   const { get, set } = useQueryState()
+  const { t } = useI18n()
 
   const selectedIds = useMemo(() => {
     const raw = get("models")
     return raw ? raw.split(",").filter(Boolean) : []
   }, [get])
 
+  const chartModels = useMemo(() => {
+    const ids = new Set(models.map((model) => model.id))
+    const extras = selectedIds
+      .map((id) => catalog.find((model) => model.id === id))
+      .filter((model): model is ModelNode => !!model && !ids.has(model.id))
+    return extras.length > 0 ? [...models, ...extras] : models
+  }, [catalog, models, selectedIds])
+
   const selectedModels = selectedIds
-    .map((id) => models.find((m) => m.id === id))
+    .map((id) => catalog.find((m) => m.id === id))
     .filter((m): m is ModelNode => !!m)
 
   function addModel(id: string) {
@@ -43,22 +61,31 @@ export function CompareExplorer({ models }: { models: ModelNode[] }) {
           disabled={selectedIds.length >= MAX_MODELS}
         />
         <span className="text-xs text-muted-foreground">
-          최대 {MAX_MODELS}개까지 비교할 수 있습니다 (<span className="font-mono">{selectedIds.length}</span>/
-          {MAX_MODELS})
+          {t("compare.maxHint", { max: MAX_MODELS, current: selectedIds.length })}
         </span>
       </div>
 
-      {selectedModels.length === 0 ? (
+      {models.length === 0 && selectedModels.length === 0 ? (
+        <Empty className="min-h-[40vh] border border-dashed border-border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FunnelIcon />
+            </EmptyMedia>
+            <EmptyTitle>{t("filter.emptyTitle")}</EmptyTitle>
+            <EmptyDescription>{t("filter.emptyDescription")}</EmptyDescription>
+          </EmptyHeader>
+          <Button variant="outline" size="sm" onClick={() => set(serializeCatalogFilters(EMPTY_FILTERS))}>
+            {t("filter.clear")}
+          </Button>
+        </Empty>
+      ) : selectedModels.length === 0 ? (
         <Empty className="min-h-[40vh] border border-dashed border-border">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <ScaleIcon />
             </EmptyMedia>
-            <EmptyTitle>비교할 모델을 추가하세요</EmptyTitle>
-            <EmptyDescription>
-              위의 &quot;모델 추가&quot; 버튼으로 2개 이상의 모델을 선택하면 벤치마크, 가격, 속도를 나란히 비교할 수
-              있습니다.
-            </EmptyDescription>
+            <EmptyTitle>{t("compare.emptyTitle")}</EmptyTitle>
+            <EmptyDescription>{t("compare.emptyDescription")}</EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : (
@@ -69,12 +96,12 @@ export function CompareExplorer({ models }: { models: ModelNode[] }) {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-lg border border-border p-4">
-              <h3 className="mb-2 text-xs font-medium text-muted-foreground">Pareto · 지능 대비 가격</h3>
-              <ParetoScatter models={models} xMetric="price" highlightIds={selectedIds} />
+              <h3 className="mb-2 text-xs font-medium text-muted-foreground">{t("compare.paretoPrice")}</h3>
+              <ParetoScatter models={chartModels} xMetric="price" highlightIds={selectedIds} />
             </div>
             <div className="rounded-lg border border-border p-4">
-              <h3 className="mb-2 text-xs font-medium text-muted-foreground">Pareto · 지능 대비 속도</h3>
-              <ParetoScatter models={models} xMetric="speed" highlightIds={selectedIds} />
+              <h3 className="mb-2 text-xs font-medium text-muted-foreground">{t("compare.paretoSpeed")}</h3>
+              <ParetoScatter models={chartModels} xMetric="speed" highlightIds={selectedIds} />
             </div>
           </div>
         </>

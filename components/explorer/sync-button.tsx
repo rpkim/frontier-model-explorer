@@ -1,34 +1,51 @@
 "use client"
 
-import { useTransition } from "react"
+import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { RefreshCwIcon } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import { PasswordDialog } from "@/components/explorer/password-dialog"
 import { syncModels } from "@/app/actions/sync"
+import { useI18n } from "@/lib/i18n/provider"
 
 export function SyncButton({ variant = "outline" }: { variant?: "outline" | "default" }) {
   const [isPending, startTransition] = useTransition()
+  const [open, setOpen] = useState(false)
   const router = useRouter()
+  const { t } = useI18n()
 
-  const handleSync = () => {
+  const handleSubmit = (password: string) => {
     startTransition(async () => {
-      const result = await syncModels()
+      const result = await syncModels(password)
       if (result.ok) {
-        toast.success("최신 데이터로 동기화했습니다.", {
-          description: result.snapshot ? `${result.snapshot.models.length}개 모델을 불러왔습니다.` : undefined,
+        toast.success(t("sync.success"), {
+          description: result.snapshot
+            ? t("sync.successDescription", { count: result.snapshot.models.length })
+            : undefined,
         })
         router.refresh()
       } else {
-        toast.error("동기화에 실패했습니다.", { description: result.error })
+        const description =
+          result.error === "UNKNOWN_SYNC_ERROR"
+            ? t("sync.unknownError")
+            : result.error === "INVALID_SYNC_PASSWORD"
+              ? t("sync.invalidPassword")
+              : result.error === "SYNC_PASSWORD_NOT_CONFIGURED"
+                ? t("sync.passwordNotConfigured")
+                : result.error
+        toast.error(t("sync.failed"), { description })
       }
     })
   }
 
   return (
-    <Button variant={variant} size="sm" onClick={handleSync} disabled={isPending}>
-      <RefreshCwIcon data-icon="inline-start" className={isPending ? "animate-spin" : ""} />
-      {isPending ? "동기화 중..." : "지금 동기화"}
-    </Button>
+    <>
+      <Button variant={variant} size="sm" onClick={() => setOpen(true)} disabled={isPending}>
+        <RefreshCwIcon data-icon="inline-start" className={isPending ? "animate-spin" : ""} />
+        {isPending ? t("sync.inProgress") : t("sync.now")}
+      </Button>
+      <PasswordDialog open={open} onOpenChange={setOpen} pending={isPending} onSubmit={handleSubmit} />
+    </>
   )
 }
