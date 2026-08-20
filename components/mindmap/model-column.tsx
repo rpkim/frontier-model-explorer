@@ -19,7 +19,7 @@ export function ModelColumn({
   onSelect: (id: string) => void
 }) {
   return (
-    <div className="flex h-full w-64 shrink-0 flex-col sm:w-72">
+    <div className="flex h-full w-full shrink-0 flex-col sm:w-72">
       <div className="border-b border-border px-3 py-2">
         <span className="text-xs font-medium text-muted-foreground">
           모델 <span className="font-mono">{models.length}</span>
@@ -44,13 +44,13 @@ export function ModelColumn({
                     active ? "bg-primary/15 text-foreground" : "text-foreground/85 hover:bg-accent",
                   )}
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
                     <span
                       className="size-1.5 shrink-0 rounded-full"
                       style={{ backgroundColor: colorForKey(model.provider.slug) }}
                       aria-hidden="true"
                     />
-                    <span className="flex-1 truncate font-medium leading-tight">{model.name}</span>
+                    <span className="min-w-0 flex-1 truncate font-medium leading-tight">{model.name}</span>
                   </div>
                   {groupBy !== "provider" && (
                     <span className="truncate pl-3.5 text-xs text-muted-foreground">{model.provider.name}</span>

@@ -15,7 +15,7 @@ export function GroupColumn({
   onSelect: (id: string) => void
 }) {
   return (
-    <div className="flex h-full w-56 shrink-0 flex-col sm:w-64">
+    <div className="flex h-full w-full shrink-0 flex-col sm:w-64">
       <div className="border-b border-border px-3 py-2">
         <span className="text-xs font-medium text-muted-foreground">
           그룹 <span className="font-mono">{groups.length}</span>

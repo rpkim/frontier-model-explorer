@@ -45,14 +45,14 @@ export function CompareTable({ models, onRemove }: { models: ModelNode[]; onRemo
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[560px] border-collapse text-sm">
+      <table className="w-full border-collapse text-sm">
         <thead>
           <tr>
-            <th className="sticky left-0 z-10 min-w-32 bg-background px-3 py-2 text-left text-xs font-medium text-muted-foreground">
+            <th className="sticky left-0 z-10 w-24 min-w-24 bg-background px-3 py-2 text-left text-xs font-medium text-muted-foreground sm:w-32 sm:min-w-32">
               지표
             </th>
             {models.map((model) => (
-              <th key={model.id} className="min-w-40 px-3 py-2 text-left align-top">
+              <th key={model.id} className="min-w-36 px-3 py-2 text-left align-top sm:min-w-40">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="flex items-center gap-1.5">
@@ -87,7 +87,7 @@ export function CompareTable({ models, onRemove }: { models: ModelNode[]; onRemo
             const best = bestValue(models, row)
             return (
               <tr key={row.label} className="border-t border-border">
-                <td className="sticky left-0 z-10 bg-background px-3 py-2 text-xs text-muted-foreground">
+                <td className="sticky left-0 z-10 w-24 bg-background px-3 py-2 text-xs text-muted-foreground sm:w-32">
                   {row.label}
                 </td>
                 {models.map((model) => {
@@ -123,7 +123,7 @@ export function CompareTable({ models, onRemove }: { models: ModelNode[]; onRemo
             )
             return (
               <tr key={key} className="border-t border-border">
-                <td className="sticky left-0 z-10 bg-background px-3 py-2 text-xs text-muted-foreground">
+                <td className="sticky left-0 z-10 w-24 bg-background px-3 py-2 text-xs text-muted-foreground sm:w-32">
                   {BENCHMARK_LABELS[key]}
                 </td>
                 {models.map((model, i) => {
