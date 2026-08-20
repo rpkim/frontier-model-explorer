@@ -9,8 +9,10 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
+import { Button } from "@/components/ui/button"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
-import { MousePointerClickIcon, LayersIcon, BrainCircuitIcon } from "lucide-react"
+import { MousePointerClickIcon, LayersIcon, BrainCircuitIcon, ChevronLeftIcon } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { useQueryState } from "@/hooks/use-query-state"
 import { groupModels, type GroupByKey } from "@/lib/aa/group-by"
 import { colorForKey } from "@/lib/aa/colors"
@@ -59,8 +61,29 @@ export function MindMapExplorer({
   const groupColor = selectedGroup ? colorForKey(selectedGroup.id) : undefined
   const modelColor = selectedModel ? colorForKey(selectedModel.provider.slug) : undefined
 
+  const mobileStep: "groups" | "models" | "detail" = selectedModel ? "detail" : selectedGroup ? "models" : "groups"
+
+  function handleBack() {
+    if (mobileStep === "detail") {
+      set({ model: null })
+    } else if (mobileStep === "models") {
+      set({ group: null, model: null })
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {mobileStep !== "groups" && (
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2 sm:hidden">
+          <Button variant="ghost" size="sm" onClick={handleBack} className="-ml-2 gap-1 text-muted-foreground">
+            <ChevronLeftIcon className="size-4" />
+            뒤로
+          </Button>
+          <span className="truncate text-sm font-medium">
+            {mobileStep === "detail" ? selectedModel?.name : selectedGroup?.label}
+          </span>
+        </div>
+      )}
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <GroupBySelector value={groupBy} onChange={handleGroupByChange} />
         <div className="hidden px-4 pb-3 sm:block sm:px-6 sm:pb-0">
@@ -99,49 +122,69 @@ export function MindMapExplorer({
         </div>
       </div>
       <div className="flex min-h-0 flex-1 overflow-x-auto border-t border-border">
-        <div className="flex min-h-0 flex-1 px-2 py-3 sm:px-4">
-          <GroupColumn groups={groups} selectedId={groupId} onSelect={handleSelectGroup} />
+        <div className="flex min-h-0 min-w-0 flex-1 px-2 py-3 sm:px-4">
+          <div
+            className={cn(
+              mobileStep === "groups" ? "flex" : "hidden",
+              "min-w-0 flex-1 sm:flex sm:w-auto sm:flex-none",
+            )}
+          >
+            <GroupColumn groups={groups} selectedId={groupId} onSelect={handleSelectGroup} />
+          </div>
 
-          <Connector active={!!selectedGroup} color={groupColor} />
+          <div className="hidden sm:flex">
+            <Connector active={!!selectedGroup} color={groupColor} />
+          </div>
 
-          {selectedGroup ? (
-            <ModelColumn
-              models={selectedGroup.models}
-              groupBy={groupBy}
-              selectedId={modelId}
-              onSelect={handleSelectModel}
-            />
-          ) : (
-            <div className="flex w-64 shrink-0 items-center justify-center sm:w-72">
-              <Empty className="border-0 p-4">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <LayersIcon />
-                  </EmptyMedia>
-                  <EmptyTitle className="text-sm">그룹을 선택하세요</EmptyTitle>
-                  <EmptyDescription className="text-xs">왼쪽에서 그룹을 클릭하면 모델 목록이 나옵니다.</EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            </div>
-          )}
+          <div
+            className={cn(
+              mobileStep === "models" ? "flex" : "hidden",
+              "min-w-0 flex-1 sm:flex sm:w-auto sm:flex-none",
+            )}
+          >
+            {selectedGroup ? (
+              <ModelColumn
+                models={selectedGroup.models}
+                groupBy={groupBy}
+                selectedId={modelId}
+                onSelect={handleSelectModel}
+              />
+            ) : (
+              <div className="flex w-64 shrink-0 items-center justify-center sm:w-72">
+                <Empty className="border-0 p-4">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <LayersIcon />
+                    </EmptyMedia>
+                    <EmptyTitle className="text-sm">그룹을 선택하세요</EmptyTitle>
+                    <EmptyDescription className="text-xs">왼쪽에서 그룹을 클릭하면 모델 목록이 나옵니다.</EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              </div>
+            )}
+          </div>
 
-          <Connector active={!!selectedModel} color={modelColor} />
+          <div className="hidden sm:flex">
+            <Connector active={!!selectedModel} color={modelColor} />
+          </div>
 
-          {selectedModel ? (
-            <ModelDetailPanel model={selectedModel} allModels={models} onAddToCompare={onAddToCompare} />
-          ) : (
-            <div className="flex min-w-80 flex-1 items-center justify-center">
-              <Empty className="border-0 p-4">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <MousePointerClickIcon />
-                  </EmptyMedia>
-                  <EmptyTitle className="text-sm">모델을 선택하세요</EmptyTitle>
-                  <EmptyDescription className="text-xs">모델을 클릭하면 상세 메타데이터가 나옵니다.</EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            </div>
-          )}
+          <div className={cn(mobileStep === "detail" ? "flex min-w-0 flex-1" : "hidden", "sm:flex sm:flex-1")}>
+            {selectedModel ? (
+              <ModelDetailPanel model={selectedModel} allModels={models} onAddToCompare={onAddToCompare} />
+            ) : (
+              <div className="flex min-w-80 flex-1 items-center justify-center">
+                <Empty className="border-0 p-4">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <MousePointerClickIcon />
+                    </EmptyMedia>
+                    <EmptyTitle className="text-sm">모델을 선택하세요</EmptyTitle>
+                    <EmptyDescription className="text-xs">모델을 클릭하면 상세 메타데이터가 나옵니다.</EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
