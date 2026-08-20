@@ -130,9 +130,23 @@ export interface HubServingLinks {
 
 export interface HubVramEstimate {
   /** Estimated GB (weights × dtype bytes + ~20% overhead). */
-  fp16: number
-  int8: number
-  int4: number
+  fp16?: number
+  int8?: number
+  int4?: number
+  /** Loaded weights at the native checkpoint dtype, no overhead (GB). */
+  weights?: number
+  /** Min GPU memory to serve the native checkpoint (weights + ~20% overhead), GB. */
+  native?: number
+  nativeDtype?: string
+  /** KV cache at 4096 context, batch 1, FP16 (GB). Not included in native/fp16/int8/int4. */
+  kvCache4k?: number
+}
+
+export type HubModelSizeSource = "safetensors" | "gguf" | "usedStorage"
+
+export interface HubTensorDtype {
+  dtype: string
+  parameterCount: number
 }
 
 export interface HubDetail {
@@ -141,7 +155,15 @@ export interface HubDetail {
   license?: string
   gated?: boolean
   parameterCount?: number
+  /** Weight-file size in bytes (safetensors sum, else primary GGUF, else usedStorage). */
+  modelSizeBytes?: number
+  modelSizeSource?: HubModelSizeSource
+  /** @deprecated Prefer modelSizeBytes. Kept so older blobs still round-trip. */
   safetensorsBytes?: number
+  tensorDtypes?: HubTensorDtype[]
+  /** Dtype with the largest parameter count, or config torch_dtype / GGUF filename. */
+  primaryDtype?: string
+  torchDtype?: string
   pipelineTag?: string
   tags?: string[]
   officialUrl?: string

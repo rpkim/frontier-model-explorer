@@ -34,7 +34,11 @@ export async function POST(req: Request) {
     const code = error instanceof HubRefreshError ? error.code : "UNKNOWN_HUB_ERROR"
     console.error("[v0] Hub detail refresh failed:", error)
     const status =
-      code === "NO_SNAPSHOT" || code === "MODEL_NOT_FOUND" || code === "NOT_OPEN" ? 400 : 500
+      code === "NO_SNAPSHOT" || code === "MODEL_NOT_FOUND" || code === "NOT_OPEN"
+        ? 400
+        : code === "HUB_STORE_FAILED"
+          ? 503
+          : 500
     return Response.json({ ok: false, error: code }, { status })
   }
 }

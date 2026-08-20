@@ -10,6 +10,28 @@ import { useI18n } from "@/lib/i18n/provider"
 
 type HubButtonVariant = "outline" | "default"
 
+interface HubApiResult {
+  ok?: boolean
+  error?: string
+  stats?: { updated: number; unmapped: number; failed: number }
+}
+
+async function readHubResponse(response: Response): Promise<HubApiResult> {
+  const text = await response.text()
+  if (text) {
+    try {
+      const parsed: unknown = JSON.parse(text)
+      if (parsed && typeof parsed === "object") return parsed as HubApiResult
+    } catch {
+      // HTML/proxy timeout pages have no JSON body.
+    }
+  }
+  if (response.status === 408 || response.status === 499 || response.status === 504) {
+    return { ok: false, error: "ROUTE_TIMEOUT" }
+  }
+  return { ok: false, error: "UNKNOWN_HUB_ERROR" }
+}
+
 export function HubRefreshButton({
   variant = "outline",
   modelId,
@@ -34,11 +56,7 @@ export function HubRefreshButton({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ password, modelId }),
         })
-        const result = (await response.json()) as {
-          ok?: boolean
-          error?: string
-          stats?: { updated: number; unmapped: number; failed: number }
-        }
+        const result = await readHubResponse(response)
 
         if (result.ok) {
           toast.success(modelId ? t("hub.successOne") : t("hub.success"), {
@@ -57,17 +75,23 @@ export function HubRefreshButton({
         const description =
           result.error === "UNKNOWN_HUB_ERROR"
             ? t("hub.unknownError")
-            : result.error === "INVALID_SYNC_PASSWORD"
-              ? t("sync.invalidPassword")
-              : result.error === "SYNC_PASSWORD_NOT_CONFIGURED"
-                ? t("sync.passwordNotConfigured")
-                : result.error === "NO_SNAPSHOT"
-                  ? t("hub.noSnapshot")
-                  : result.error === "NOT_OPEN"
-                    ? t("hub.notOpen")
-                    : result.error === "MODEL_NOT_FOUND"
-                      ? t("hub.modelNotFound")
-                      : result.error
+            : result.error === "HUB_STORE_FAILED"
+              ? t("hub.storeFailed")
+              : result.error === "ROUTE_TIMEOUT"
+                ? t("hub.routeTimeout")
+                : result.error === "INVALID_SYNC_PASSWORD"
+                  ? t("sync.invalidPassword")
+                  : result.error === "SYNC_PASSWORD_NOT_CONFIGURED"
+                    ? t("sync.passwordNotConfigured")
+                    : result.error === "NO_SNAPSHOT"
+                      ? t("hub.noSnapshot")
+                      : result.error === "NOT_OPEN"
+                        ? t("hub.notOpen")
+                        : result.error === "MODEL_NOT_FOUND"
+                          ? t("hub.modelNotFound")
+                          : result.error === "INVALID_REQUEST"
+                            ? t("hub.unknownError")
+                            : (result.error ?? t("hub.unknownError"))
         toast.error(t("hub.failed"), { description })
       } catch {
         toast.error(t("hub.failed"), { description: t("hub.unknownError") })
