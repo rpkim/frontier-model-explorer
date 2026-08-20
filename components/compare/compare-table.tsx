@@ -7,9 +7,11 @@ import { colorForKey } from "@/lib/aa/colors"
 import { formatDate, formatPrice, formatScore, formatSeconds, formatSpeed } from "@/lib/aa/format"
 import { BENCHMARK_LABELS, type ModelNode } from "@/lib/aa/types"
 import { cn } from "@/lib/utils"
+import { useI18n } from "@/lib/i18n/provider"
+import type { MessageKey } from "@/lib/i18n/translate"
 
 interface Row {
-  label: string
+  labelKey: MessageKey
   get: (m: ModelNode) => number | null
   format: (v: number | null) => string
   /** "high" = highest value wins, "low" = lowest value wins */
@@ -17,15 +19,15 @@ interface Row {
 }
 
 const ROWS: Row[] = [
-  { label: "Intelligence Index", get: (m) => m.intelligenceIndex, format: formatScore, better: "high" },
-  { label: "Coding Index", get: (m) => m.codingIndex, format: formatScore, better: "high" },
-  { label: "Math Index", get: (m) => m.mathIndex, format: formatScore, better: "high" },
-  { label: "블렌디드 가격 ($/1M)", get: (m) => m.priceBlendedPerM, format: formatPrice, better: "low" },
-  { label: "입력 가격 ($/1M)", get: (m) => m.priceInputPerM, format: formatPrice, better: "low" },
-  { label: "출력 가격 ($/1M)", get: (m) => m.priceOutputPerM, format: formatPrice, better: "low" },
-  { label: "출력 속도 (tok/s)", get: (m) => m.outputTokensPerSecond, format: formatSpeed, better: "high" },
+  { labelKey: "detail.intelligenceIndex", get: (m) => m.intelligenceIndex, format: formatScore, better: "high" },
+  { labelKey: "detail.codingIndex", get: (m) => m.codingIndex, format: formatScore, better: "high" },
+  { labelKey: "detail.mathIndex", get: (m) => m.mathIndex, format: formatScore, better: "high" },
+  { labelKey: "compare.blendedPrice", get: (m) => m.priceBlendedPerM, format: formatPrice, better: "low" },
+  { labelKey: "compare.inputPrice", get: (m) => m.priceInputPerM, format: formatPrice, better: "low" },
+  { labelKey: "compare.outputPrice", get: (m) => m.priceOutputPerM, format: formatPrice, better: "low" },
+  { labelKey: "compare.outputSpeed", get: (m) => m.outputTokensPerSecond, format: formatSpeed, better: "high" },
   {
-    label: "TTFT",
+    labelKey: "compare.ttft",
     get: (m) => m.timeToFirstTokenSeconds,
     format: formatSeconds,
     better: "low",
@@ -39,6 +41,7 @@ function bestValue(models: ModelNode[], row: Row): number | null {
 }
 
 export function CompareTable({ models, onRemove }: { models: ModelNode[]; onRemove: (id: string) => void }) {
+  const { t, locale } = useI18n()
   const benchmarkKeys = Array.from(new Set(models.flatMap((m) => Object.keys(m.benchmarks)))) as Array<
     keyof typeof BENCHMARK_LABELS
   >
@@ -49,7 +52,7 @@ export function CompareTable({ models, onRemove }: { models: ModelNode[]; onRemo
         <thead>
           <tr>
             <th className="sticky left-0 z-10 w-24 min-w-24 bg-background px-3 py-2 text-left text-xs font-medium text-muted-foreground sm:w-32 sm:min-w-32">
-              지표
+              {t("compare.metric")}
             </th>
             {models.map((model) => (
               <th key={model.id} className="min-w-36 px-3 py-2 text-left align-top sm:min-w-40">
@@ -68,7 +71,7 @@ export function CompareTable({ models, onRemove }: { models: ModelNode[]; onRemo
                   <Button
                     variant="ghost"
                     size="icon-sm"
-                    aria-label={`${model.name} 제거`}
+                    aria-label={t("compare.removeAria", { name: model.name })}
                     onClick={() => onRemove(model.id)}
                     className="shrink-0"
                   >
@@ -76,7 +79,7 @@ export function CompareTable({ models, onRemove }: { models: ModelNode[]; onRemo
                   </Button>
                 </div>
                 <Badge variant="outline" className="mt-2 font-mono text-[10px]">
-                  {formatDate(model.releaseDate)}
+                  {formatDate(model.releaseDate, locale, t("format.unknownDate"))}
                 </Badge>
               </th>
             ))}
@@ -86,9 +89,9 @@ export function CompareTable({ models, onRemove }: { models: ModelNode[]; onRemo
           {ROWS.map((row) => {
             const best = bestValue(models, row)
             return (
-              <tr key={row.label} className="border-t border-border">
+              <tr key={row.labelKey} className="border-t border-border">
                 <td className="sticky left-0 z-10 w-24 bg-background px-3 py-2 text-xs text-muted-foreground sm:w-32">
-                  {row.label}
+                  {t(row.labelKey)}
                 </td>
                 {models.map((model) => {
                   const value = row.get(model)
@@ -111,7 +114,7 @@ export function CompareTable({ models, onRemove }: { models: ModelNode[]; onRemo
           {benchmarkKeys.length > 0 && (
             <tr>
               <td colSpan={models.length + 1} className="px-3 pt-4 pb-1 text-xs font-medium text-muted-foreground">
-                벤치마크
+                {t("compare.benchmarks")}
               </td>
             </tr>
           )}

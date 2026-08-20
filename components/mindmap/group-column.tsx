@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { colorForKey } from "@/lib/aa/colors"
 import type { Group } from "@/lib/aa/group-by"
+import { useI18n } from "@/lib/i18n/provider"
 
 export function GroupColumn({
   groups,
@@ -14,11 +15,13 @@ export function GroupColumn({
   selectedId: string | null
   onSelect: (id: string) => void
 }) {
+  const { t } = useI18n()
+
   return (
     <div className="flex h-full w-full shrink-0 flex-col sm:w-64">
       <div className="border-b border-border px-3 py-2">
         <span className="text-xs font-medium text-muted-foreground">
-          그룹 <span className="font-mono">{groups.length}</span>
+          {t("groups.label")} <span className="font-mono">{groups.length}</span>
         </span>
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -26,6 +29,7 @@ export function GroupColumn({
           {groups.map((group) => {
             const active = group.id === selectedId
             const dot = colorForKey(group.id)
+            const label = group.labelKey ? t(group.labelKey) : group.label
             return (
               <li key={group.id}>
                 <button
@@ -43,7 +47,7 @@ export function GroupColumn({
                     aria-hidden="true"
                   />
                   <span className="flex-1 truncate">
-                    <span className="block truncate leading-tight font-medium">{group.label}</span>
+                    <span className="block truncate leading-tight font-medium">{label}</span>
                     {group.sublabel && (
                       <span className="block truncate text-xs text-muted-foreground">{group.sublabel}</span>
                     )}

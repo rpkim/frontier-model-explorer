@@ -3,11 +3,7 @@
 import { CartesianGrid, Scatter, ScatterChart, XAxis, YAxis, ZAxis } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import type { ModelNode } from "@/lib/aa/types"
-
-const chartConfig: ChartConfig = {
-  others: { label: "다른 모델", color: "var(--chart-5)" },
-  highlighted: { label: "선택 모델", color: "var(--chart-1)" },
-}
+import { useI18n } from "@/lib/i18n/provider"
 
 /**
  * Scatter plot of intelligence vs. cost (or speed) across all models, with the
@@ -23,8 +19,13 @@ export function ParetoScatter({
   xMetric: "price" | "speed"
   highlightIds: string[]
 }) {
+  const { t } = useI18n()
+  const chartConfig: ChartConfig = {
+    others: { label: t("chart.otherModels"), color: "var(--chart-5)" },
+    highlighted: { label: t("chart.highlighted"), color: "var(--chart-1)" },
+  }
   const xKey = xMetric === "price" ? "priceBlendedPerM" : "outputTokensPerSecond"
-  const xLabel = xMetric === "price" ? "가격 ($/1M 토큰, blended)" : "속도 (tok/s)"
+  const xLabel = xMetric === "price" ? t("chart.priceAxis") : t("chart.speedAxis")
 
   const points = models
     .filter((m) => m.intelligenceIndex !== null && m[xKey] !== null)
@@ -57,11 +58,11 @@ export function ParetoScatter({
         <YAxis
           type="number"
           dataKey="y"
-          name="Intelligence Index"
+          name={t("detail.intelligenceIndex")}
           tick={{ fontSize: 11 }}
           width={32}
           label={{
-            value: "지능",
+            value: t("chart.intelligence"),
             angle: -90,
             position: "insideLeft",
             fontSize: 11,
@@ -79,7 +80,10 @@ export function ParetoScatter({
                   <span className="font-medium text-foreground">{item.payload.name}</span>
                   <span className="text-muted-foreground">{item.payload.provider}</span>
                   <span className="font-mono text-foreground">
-                    지능 {item.payload.y.toFixed(1)} · {xMetric === "price" ? `$${item.payload.x}` : `${item.payload.x} tok/s`}
+                    {t("chart.tooltip", {
+                      y: item.payload.y.toFixed(1),
+                      x: xMetric === "price" ? `$${item.payload.x}` : `${item.payload.x} tok/s`,
+                    })}
                   </span>
                 </div>
               )}

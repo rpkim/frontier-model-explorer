@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils"
 import { colorForKey } from "@/lib/aa/colors"
 import { highlightMetricFor, type GroupByKey } from "@/lib/aa/group-by"
 import type { ModelNode } from "@/lib/aa/types"
+import { useI18n } from "@/lib/i18n/provider"
 
 const MAX_INTELLIGENCE = 75
 
@@ -18,11 +19,13 @@ export function ModelColumn({
   selectedId: string | null
   onSelect: (id: string) => void
 }) {
+  const { t } = useI18n()
+
   return (
     <div className="flex h-full w-full shrink-0 flex-col sm:w-72">
       <div className="border-b border-border px-3 py-2">
         <span className="text-xs font-medium text-muted-foreground">
-          모델 <span className="font-mono">{models.length}</span>
+          {t("models.label")} <span className="font-mono">{models.length}</span>
         </span>
       </div>
       <div className="flex-1 overflow-y-auto">
