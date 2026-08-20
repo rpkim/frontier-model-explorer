@@ -4,8 +4,12 @@ export function reportDownloadBasename(generatedAt: string): string {
   return `frontier-report-${ymd}`
 }
 
-export function downloadMarkdownFile(markdown: string, generatedAt: string): void {
-  const filename = `${reportDownloadBasename(generatedAt)}.md`
+export function downloadMarkdownFile(
+  markdown: string,
+  generatedAt: string,
+  basename = reportDownloadBasename(generatedAt),
+): void {
+  const filename = `${basename}.md`
   const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" })
   const url = URL.createObjectURL(blob)
   const link = document.createElement("a")

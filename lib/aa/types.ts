@@ -187,3 +187,45 @@ export interface CatalogReport {
   model: string
   snapshotSyncedAt: string
 }
+
+/** Compact Hub + catalog facts used to ground a per-model serving guide. */
+export interface GuideHardwareContext {
+  modelId: string
+  modelName: string
+  provider: string
+  releaseDate?: string
+  hfId?: string
+  license?: string
+  gated?: boolean
+  parameterCount?: number
+  modelSizeGb?: number
+  modelSizeSource?: HubModelSizeSource
+  primaryDtype?: string
+  pipelineTag?: string
+  vramGb?: HubVramEstimate
+  intelligenceIndex?: number
+  codingIndex?: number
+  mathIndex?: number
+  outputTokensPerSecond?: number
+  timeToFirstTokenSeconds?: number
+  benchmarks?: Record<string, number>
+}
+
+export interface ModelGuide {
+  generatedAt: string
+  locale: string
+  modelId: string
+  modelName: string
+  hfId?: string
+  markdown: string
+  hardwareContext: GuideHardwareContext
+  geminiModel: string
+}
+
+export interface GuideIndexEntry {
+  generatedAt: string
+  modelName: string
+  hfId?: string
+}
+
+export type GuideIndex = Record<string, GuideIndexEntry>
