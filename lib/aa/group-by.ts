@@ -108,7 +108,7 @@ export function groupByPrice(models: ModelNode[]): Group[] {
       id: `price-${min}`,
       label,
       order: i,
-      test: (m) => m.priceBlendedPerM !== null && m.priceBlendedPerM >= min,
+      test: (m: ModelNode) => m.priceBlendedPerM !== null && m.priceBlendedPerM >= min,
     }))
     .reverse() // check highest threshold first
   buckets.push({

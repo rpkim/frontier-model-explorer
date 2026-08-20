@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { Toaster } from '@/components/ui/sonner'
 import './globals.css'
 
 const _geistSans = Geist({ subsets: ['latin'], variable: '--font-sans' })
@@ -45,6 +46,7 @@ export default function RootLayout({
     <html lang="ko" className={`dark bg-background ${_geistSans.variable} ${_geistMono.variable}`}>
       <body className="font-sans antialiased">
         <TooltipProvider>{children}</TooltipProvider>
+        <Toaster />
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
