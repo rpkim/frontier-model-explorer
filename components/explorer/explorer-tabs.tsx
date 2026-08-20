@@ -1,6 +1,5 @@
 "use client"
 
-import { useState } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useQueryState } from "@/hooks/use-query-state"
 import type { ModelNode } from "@/lib/aa/types"
@@ -10,20 +9,22 @@ import { CompareExplorer } from "@/components/compare/compare-explorer"
 const MAX_COMPARE_MODELS = 4
 
 export function ExplorerTabs({ models }: { models: ModelNode[] }) {
-  const [tab, setTab] = useState("mindmap")
   const { get, set } = useQueryState()
+  const tab = get("tab") === "compare" ? "compare" : "mindmap"
 
   function addToCompare(id: string) {
     const raw = get("models")
     const ids = raw ? raw.split(",").filter(Boolean) : []
-    if (!ids.includes(id) && ids.length < MAX_COMPARE_MODELS) {
-      set({ models: [...ids, id].join(",") })
-    }
-    setTab("compare")
+    const nextIds = !ids.includes(id) && ids.length < MAX_COMPARE_MODELS ? [...ids, id] : ids
+    set({ tab: "compare", models: nextIds.join(",") })
   }
 
   return (
-    <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0">
+    <Tabs
+      value={tab}
+      onValueChange={(next) => set({ tab: next === "mindmap" ? null : next })}
+      className="flex min-h-0 flex-1 flex-col gap-0"
+    >
       <div className="border-b border-border px-4 sm:px-6">
         <TabsList className="h-11 bg-transparent p-0">
           <TabsTrigger
