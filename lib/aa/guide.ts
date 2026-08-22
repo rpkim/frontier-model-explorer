@@ -172,7 +172,7 @@ Orchestration: Kubernetes (GPU operator / GKE with GPU or TPU), Slurm for resear
 
 Frameworks:
 - GPU: vLLM (PagedAttention, prefix cache, FP8), SGLang, TensorRT-LLM, TGI. Hugging Face id in hardware JSON is the serve target.
-- TPU: JAX MaxText / Pax / vLLM-TPU where available; do not pretend PyTorch-CUDA flags apply unchanged on TPU.
+- TPU: vLLM TPU via tpu-inference (JAX→XLA for PyTorch and JAX), JAX MaxText / Pax / JetStream. CUDA graphs and nvidia-smi do not apply; use XLA compile + Cloud TPU profiler.
 
 3D parallelism (match interconnect):
 - Tensor parallel (TP) within a node (NVLink / TPU ICI). Typical TP = GPUs per node if the shard fits.
@@ -185,6 +185,14 @@ KV cache / long-context:
 - PagedAttention, prefix/session cache, KV FP8/INT8, chunked prefill.
 - If kvCache4k (GB, batch 1, FP16) is present, scale linearly with context/4096 and batch.
 - Prefill/decode disaggregation for long-context reasoning when context >> 4k.
+
+TPU recipes + XLA (source of record for TPU serving methodology: https://github.com/AI-Hypercomputer/tpu-recipes — recipes reproduce throughput, they do NOT publish confidential scoreboards; never invent tok/s from that repo):
+- Layout: inference/{v5e,trillium=v6e,ironwood=TPU7x}/vLLM plus training/ and microbenchmarks/ (matmul, HBM, ICI collectives). Prefer vLLM TPU via tpu-inference (JAX→XLA lowering for PyTorch and JAX). Image family vllm/vllm-tpu (pin a tag in examples). GCE TPU VMs or GKE; production clusters: Cluster Toolkit. Capacity: Queued Resources when on-demand is scarce.
+- Topologies from recipes: Trillium v6e 1x1 (1 chip, ~8B), 2x2 (4 chips, ~32B), 2x4 (8 chips, ~70B); runtime v2-alpha-tpuv6e. Ironwood GKE nodeSelector cloud.google.com/gke-tpu-accelerator=tpu7x, topology 2x2x1 (4 chips), machine tpu7x-standard-4t. Single-host: set tensor-parallel-size to the chip count — do not set TP below chips on one host.
+- XLA is a static-shape compiler. First vLLM TPU start pre-compiles graphs per (batch, seq) bucket — minutes to ~1 hour. Cache at VLLM_XLA_CACHE_PATH (default ~/.cache/vllm/xla_cache). Put the cache on shared PVC/GCS so scaled replicas skip compile. If many replicas write the cache at once, filesystem errors occur: bring up replica 1 first, then scale, or give later replicas read-only cache.
+- Shape/padding knobs: VLLM_TPU_MOST_MODEL_LEN when most traffic is shorter than max-model-len; VLLM_TPU_BUCKET_PADDING_GAP in 128-token steps (128, 256, …) for online latency. VLLM_USE_V1=1 in Trillium recipes. VLLM_ENGINE_READY_TIMEOUT_S high (e.g. 1800) because compile is slow. Quantized matmul: LIBTPU_INIT_ARGS may include --xla_jf_conv_input_fusion=False. v5e/v6e MXU has int4/int8 acceleration.
+- Serve flags seen in tpu-recipes (adapt to THIS model's size; do not copy their throughput numbers): --gpu-memory-utilization 0.9–0.98; --max-num-batched-tokens 512 decode-heavy vs 1024–2048+ prefill-heavy (Ironwood Gemma used 16384); --max-num-seqs 128–256; --async-scheduling; some recipes --no-enable-prefix-caching; --kv-cache-dtype fp8 and --block-size 256 on Ironwood; Docker --privileged --net=host --shm-size large (weights often HF_HOME=/dev/shm).
+- Measure like the recipes: vllm bench serve --dataset-name random; prefill-heavy ~1800/128 vs decode-heavy ~1000/1000; concurrency 64 vs 128 (higher concurrency raises throughput and TTFT P99). Ironwood GKE benches also use 1k/500, 1k/8k, 8k/1k sweeps. Microbenchmarks (GEMM, HBM, collectives) diagnose ICI vs memory bound. Cloud TPU profiler / XLA dump after compile, not nvidia-smi.
 `.trim()
 
 export function buildGuidePrompt({
@@ -202,6 +210,7 @@ export function buildGuidePrompt({
     "VRAM figures are estimates (weights + ~20% overhead). Never claim a specific SKU 'will run' — say 'planning fit' vs 'too small unless quantized/sharded'.",
     "Give 1–2 recommended configs for BOTH GPU and TPU: (A) budget inference (B) production long-context. Label all accelerator counts as estimates.",
     "The executive recommendation MUST include TPU, not GPU only. Never skip TPU in that section.",
+    "For every TPU recommendation, follow AI-Hypercomputer/tpu-recipes methodology (XLA compile/cache, topologies, vLLM-TPU flags, recipe-style benches). Do not paste confidential or invented tok/s from that repo.",
     "Catalog intelligence/coding scores and API tok/s are quality/API references, NOT local-cluster SLOs or GPU-sizing inputs.",
     HARDWARE_PACK,
     `Write the entire guide in ${GUIDE_LANGUAGE[locale]}. Translate section titles.`,
@@ -216,13 +225,13 @@ export function buildGuidePrompt({
     "1. H1 — model name + one-line serving thesis (budget vs production).",
     "2. H2 Executive recommendation — MUST cover GPU and TPU equally. Required markdown table with columns: Path | Role | SKU / generation | Count | Topology (nodes or TPU slice/pod) | Orchestrator | Why. Required rows: (1) GPU budget (2) GPU production long-context (3) TPU budget (4) TPU production long-context. Use real TPU gens (v5e / v6e / v5p / Ironwood), never omit the TPU rows. Then 2–4 bullets: when to pick GPU vs TPU.",
     "3. H2 GPU path — SKU options, GPU count, node layout (e.g. 8×H100), Kubernetes/GKE/Slurm/Ray, interconnect. Call out SKUs that are too small.",
-    "4. H2 TPU path — real generation (v4 / v5e / v5p / v6e Trillium / Ironwood TPU7x), slice/pod shape, chips, hosts, GKE vs TPU VM. Never recommend TPU v1 or a fictional TPU v8.",
-    "5. H2 Framework — GPU: vLLM and/or SGLang with example serve flags using hfId (TGI optional). TPU: JAX MaxText/Pax/JetStream; vLLM-TPU only as emerging. Gated weights: HF token.",
+    "4. H2 TPU path — real generation (v5e / v6e Trillium / v5p / Ironwood TPU7x), chip count, topology (e.g. v6e 2x2/2x4, Ironwood 2x2x1), GCE TPU VM vs GKE + Cluster Toolkit, queued resources. Include H3 XLA tuning: static shapes, first-compile warmup, VLLM_XLA_CACHE_PATH, replica cache-write race, VLLM_TPU_MOST_MODEL_LEN, VLLM_TPU_BUCKET_PADDING_GAP (128), LIBTPU_INIT_ARGS for quantized matmul. Link https://github.com/AI-Hypercomputer/tpu-recipes as the reproduce-the-stack reference. Never recommend TPU v1 or a fictional TPU v8.",
+    "5. H2 Framework — GPU: vLLM and/or SGLang with example serve flags using hfId (TGI optional). TPU: vllm/vllm-tpu (tpu-inference JAX→XLA path) with a concrete `vllm serve` using this hfId, TP=chips, gpu-memory-utilization, max-num-batched-tokens (prefill vs decode), max-num-seqs, async-scheduling; JAX MaxText/Pax/JetStream as the training/native-JAX alternative. Gated weights: HF token. Docker privileged + large shm as in tpu-recipes.",
     "6. H2 3D parallelism — concrete TP/PP/DP (EP if MoE) mapped to the GPU node fabric and a TPU topology.",
     "7. H2 KV cache and long context — paged attention, prefix/session cache, KV quantization, when to disaggregate prefill/decode. Use kvCache4k if present to estimate 32k/128k at batch 1 and a small batch.",
-    "8. H2 Performance measurement — after the model is serving: metrics (TTFT, inter-token latency, throughput tok/s, goodput, GPU/TPU utilization, KV cache hit rate, queue depth); scrape sources (vLLM /metrics, DCGM or nvidia-smi, Cloud TPU profiler); a minimal load-test recipe (ShareGPT-style chat vs a long-prompt / long-context sweep). Do not treat catalog API tok/s or TTFT as the cluster SLO.",
+    "8. H2 Performance measurement — after the model is serving: metrics (TTFT, TPOT, ITL, throughput tok/s, goodput, GPU/TPU util, KV cache hit rate, queue depth). GPU: vLLM /metrics + DCGM. TPU: follow tpu-recipes — `vllm bench serve` random dataset; run a prefill-heavy and a decode-heavy sweep; note concurrency vs P99 TTFT; optional Ironwood 1k/8k and 8k/1k; XLA compile time as a separate SLO; Cloud TPU profiler. Do not treat catalog API tok/s as the cluster SLO and do not invent tpu-recipes throughput numbers.",
     "9. H2 Benchmarks and quality checks — serving benches vs quality benches. Use catalog intelligence/coding/math and named scores as the pre-deploy quality baseline. After quantization or tensor-parallel serving, re-run a small eval (lm-eval subset, needle-in-haystack, or LongBench-style check) so quality does not silently regress.",
-    "10. H2 Optimization loop — ordered knobs: max_num_seqs / batch, chunked prefill, CUDA graphs or compile, prefix cache, KV/weight quantization, speculative decoding, more replicas vs more TP. Short playbook: if TTFT is high / if throughput is low / if OOM on KV.",
+    "10. H2 Optimization loop — GPU knobs: max_num_seqs / batch, chunked prefill, CUDA graphs, prefix cache, KV/weight quant, speculative decoding, replicas vs TP. TPU knobs (after XLA cache is warm): max-num-batched-tokens (512 decode vs 2048+ prefill), max-num-seqs, gpu-memory-utilization, KV FP8, bucket padding, MOST_MODEL_LEN, INT8/FP8 on v5e/v6e MXU, then more chips vs more replicas. Playbook: if first start is slow (compile/cache) / if TTFT is high / if throughput is low / if OOM on KV.",
     "11. H2 Risks — OOM (weights vs KV), interconnect, gated weights, GGUF vs GPU serving if modelSizeSource is gguf, missing facts.",
     "",
     "Be specific to this model's numbers. Keep it scannable (~1100–1800 words).",
