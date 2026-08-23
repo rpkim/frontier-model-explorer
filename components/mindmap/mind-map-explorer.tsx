@@ -111,9 +111,14 @@ export function MindMapExplorer({
           </span>
         </div>
       )}
-      <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-        <GroupBySelector value={groupBy} onChange={handleGroupByChange} />
-        <SortSelector value={sort} onChange={handleSortChange} />
+      <div
+        className={cn(
+          "flex items-center gap-2 px-3 py-2 sm:justify-between sm:gap-3 sm:px-6 sm:py-3",
+          mobileStep !== "groups" && "hidden sm:flex",
+        )}
+      >
+        <GroupBySelector value={groupBy} onChange={handleGroupByChange} className="min-w-0 flex-1 sm:flex-none" />
+        <SortSelector value={sort} onChange={handleSortChange} className="min-w-0 flex-1 sm:flex-none" />
       </div>
       <div className="hidden px-4 pb-3 sm:block sm:px-6 sm:pb-3">
         <Breadcrumb>

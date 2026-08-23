@@ -78,7 +78,7 @@ export function ExplorerTabs({
         </TabsList>
       </div>
       {tab === "mindmap" && (
-        <div className="border-b border-border px-4 py-3 sm:px-6">
+        <div className="border-b border-border px-3 py-2 sm:px-6 sm:py-3">
           <FilterBar catalog={models} filteredCount={filteredModels.length} />
         </div>
       )}
