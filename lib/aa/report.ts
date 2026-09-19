@@ -1,11 +1,18 @@
 import { get, put } from "@vercel/blob"
 import { CATALOG_FIELD_LEGEND, serializeCatalogForAgent } from "./catalog-for-agent"
 import { isOpenWeight } from "./filter"
-import type { Locale } from "@/lib/i18n/locales"
+import { analyzeValue, type ValueAnalysis } from "./value"
+import { WORKLOAD_IDS, type WorkloadId } from "./workloads"
+import { LOCALES, type Locale } from "@/lib/i18n/locales"
 import type { CatalogReport, ModelNode } from "./types"
 
+/** Legacy single-report path, kept so reports written before per-locale storage still load. */
 export const REPORT_BLOB_PATHNAME = "frontier-models/reports/latest.json"
 export const REPORT_MODEL_ID = "gemini-3.5-flash"
+
+export function reportBlobPathname(locale: Locale): string {
+  return `frontier-models/reports/${locale}.json`
+}
 
 const REPORT_LANGUAGE: Record<Locale, string> = {
   ko: "Korean",
@@ -140,27 +147,76 @@ export function isCatalogReport(value: unknown): value is CatalogReport {
   )
 }
 
-export async function readReport(): Promise<CatalogReport | null> {
+async function readReportAt(pathname: string): Promise<CatalogReport | null> {
   try {
-    const result = await get(REPORT_BLOB_PATHNAME, { access: "private" })
+    const result = await get(pathname, { access: "private" })
     if (!result) return null
     const text = await new Response(result.stream).text()
     const parsed: unknown = JSON.parse(text)
     return isCatalogReport(parsed) ? parsed : null
   } catch (error) {
-    console.error("[v0] Failed to read report from Blob:", error)
+    console.error("Failed to read report from Blob:", error)
     return null
   }
 }
 
+/**
+ * Reports are stored per locale so that generating an English report no longer
+ * overwrites the Korean one. Falls back to the legacy shared path only when the
+ * report stored there was written in the requested language.
+ */
+export async function readReport(locale: Locale): Promise<CatalogReport | null> {
+  const current = await readReportAt(reportBlobPathname(locale))
+  if (current) return current
+
+  const legacy = await readReportAt(REPORT_BLOB_PATHNAME)
+  return legacy?.locale === locale ? legacy : null
+}
+
 export async function writeReport(report: CatalogReport): Promise<CatalogReport> {
-  await put(REPORT_BLOB_PATHNAME, JSON.stringify(report), {
+  const locale = LOCALES.find((code) => code === report.locale)
+  await put(reportBlobPathname(locale ?? "en"), JSON.stringify(report), {
     access: "private",
     contentType: "application/json",
     addRandomSuffix: false,
     allowOverwrite: true,
   })
   return report
+}
+
+const VALUE_FIELD_LEGEND = [
+  "Each workload is a realistic task profile with its own input:output token mix, because a single blended 3:1 price misprices retrieval (input-heavy) and reasoning (output-heavy) work",
+  "inputTokensPerTask / outputTokensPerTask / monthlyTasks = the assumed workload; monthlyCostUsd is costPerTaskUsd x monthlyTasks",
+  "quality = weighted score 0-100 over that workload's benchmarks, normalized against the strongest model in this snapshot",
+  "coverage = fraction of the workload's quality signals that had data for that model; below 1.0 the score rests on partial evidence",
+  "successRate / successSignal = pass rate on the named benchmark, used as a reliability proxy",
+  "costPerSuccessUsd = costPerTaskUsd / successRate, the cost of one delivered result rather than one attempt",
+  "qualityFloor = minimum quality to be recommendable for that workload, set at the stated percentile of rated models",
+  "bestValue = knee of the cost/quality frontier, where paying more stops buying much quality",
+  "runnerUp = the next step up the frontier; budget = cheapest model still above the floor; premium = highest quality that meets the latency class",
+  "premiumCostMultiple / premiumQualityGain = what the jump from bestValue to premium costs and buys",
+  "falseBargains = cheaper per attempt than bestValue yet no cheaper per successful task",
+  "overpriced = costs more than bestValue while scoring lower: strictly dominated",
+  "latencyStatus = ok | unknown | slow against the workload's latency class",
+  "unmeasuredLatencyCount = models excluded from an interactive workload because their latency is unpublished",
+].join("; ")
+
+/** Natural-language names for the workload ids, so the report never echoes the raw identifiers. */
+const WORKLOAD_PROMPT_NAMES: Record<WorkloadId, string> = {
+  chat: "customer-facing chat",
+  rag: "document question answering and retrieval (RAG)",
+  toolAgent: "tool-using agent",
+  codingAgent: "coding agent",
+  reasoning: "hard reasoning and research",
+  bulkExtraction: "bulk classification and extraction",
+}
+
+/** Section 3 is generated per workload so the instruction stays in sync with the profiles. */
+function workloadSectionInstruction(): string {
+  return WORKLOAD_IDS.map(
+    (id, index) =>
+      `3.${index + 1} H3 titled with the translated name of "${WORKLOAD_PROMPT_NAMES[id]}", using the entry whose workloadId is "${id}"`,
+  ).join("; ")
 }
 
 export function buildReportPrompt({
@@ -171,25 +227,32 @@ export function buildReportPrompt({
   models: ModelNode[]
   syncedAt: string
   locale: Locale
-}): { system: string; prompt: string } {
+}): { system: string; prompt: string; valueAnalysis: ValueAnalysis } {
   const catalog = serializeCatalogForAgent(models)
   const summary = summarizeCatalog(models)
+  const value = analyzeValue(models)
   const truncationNote = catalog.truncatedFields
     ? `Per-model benchmark scores (field b) were omitted so all ${catalog.modelCount} models could fit. Indexes, prices, speed, open-weight flags, and release dates are still present.`
     : `The catalog includes all ${catalog.modelCount} models with available indexes, prices, speed, and benchmark scores.`
 
   const system = [
     "You are the catalog analyst for Frontier Model Explorer.",
-    "Write a scannable briefing from ONLY the Artificial Analysis snapshot catalog and the precomputed summary below.",
+    "Write a scannable briefing from ONLY the Artificial Analysis snapshot catalog and the precomputed JSON below.",
     "Do not invent models, providers, scores, prices, dates, or labs that are not in the data.",
     "If a value is missing, say it is unknown in this snapshot. Never fabricate numbers.",
+    "CRITICAL: every number you print must be copied verbatim from the precomputed JSON or the catalog. Do not add, divide, average, convert, or otherwise derive figures yourself — the value analysis has already been computed for you. Your job is to explain what those numbers mean for a reader choosing a model.",
+    "Never print JSON field names, workload ids, or camelCase identifiers in the report. Refer to each concept by a natural phrase in the target language instead.",
+    "Prefix every monetary figure with $ and keep the precision given in the JSON.",
     "Prefer tables, short bullets, and 1–3 blockquote callouts over long prose.",
-    `Write the entire report in ${REPORT_LANGUAGE[locale]}. Translate section titles into that language.`,
+    `Write the entire report in ${REPORT_LANGUAGE[locale]}, including every section title. Do not mix in words from any other language except model, provider, and benchmark names, which stay as written in the catalog.`,
     `Snapshot synced at: ${syncedAt}. Catalog size: ${catalog.modelCount} models.`,
     truncationNote,
-    `Field legend: ${CATALOG_FIELD_LEGEND}.`,
-    "Precomputed summary JSON (use these figures for the executive snapshot; they are derived from the catalog):",
+    `Catalog field legend: ${CATALOG_FIELD_LEGEND}.`,
+    `Value analysis legend: ${VALUE_FIELD_LEGEND}.`,
+    "Precomputed summary JSON (use these figures for the executive snapshot):",
     JSON.stringify(summary),
+    "Precomputed value analysis JSON (the only source for the value-by-task section):",
+    JSON.stringify(value),
     "Catalog JSON:",
     catalog.json,
   ].join("\n")
@@ -199,13 +262,16 @@ export function buildReportPrompt({
     "",
     "1. H1 title — short, specific to this snapshot.",
     "2. H2 Executive snapshot — a compact markdown table of 4–6 headline stats (metric | value), then one short interpretation paragraph.",
-    "3. H2 Best value-for-money — 가성비 / cheap-for-intelligence. Use the price-intelligence Pareto list as the backbone, not merely the cheapest models. Table columns: Model | Provider | Intelligence | Blended $/1M | Why. Pick 5–8 named models and explain why each is (or is not) a good deal. Add a short bullet list of traps (expensive for the score, cheap but weak, missing price).",
-    "4. H2 Trends — H3 new/rising labs; H3 open vs closed using field ow (1 = open-weight heuristic, 0 = proprietary); H3 price, speed, and intelligence shifts by release cohort when dates exist.",
-    "5. H2 Other standouts — H3 fastest; H3 strongest intelligence; H3 coding standouts; H3 notable gaps or missing data.",
-    "6. H2 How to read this — short caveats: snapshot date, missing prices/scores, open-weight flag is a heuristic.",
+    "3. H2 Value by task. Open with two or three sentences explaining that cheap is not the same as good value: the ranking metric is cost per successful task at each workload's own token mix, so a model with a low sticker price and a weak success rate can cost more per delivered result. Then write one H3 per workload from valueAnalysis.workloads, in the given order:",
+    `   ${workloadSectionInstruction()}.`,
+    "   Each H3 must contain, in this order: (a) one italic line stating the assumed workload — input and output tokens per task, the token ratio, monthly task volume, the quality floor stated as \"models must rank in the top N% on quality\" using qualityFloorTopPercent, the latency class in plain words, and the number of models left out for unpublished latency when that count is above zero; (b) a table with columns Role | Model | Provider | Quality | Success rate | $/task | $/month covering bestValue, runnerUp, budget, and premium — skip any that are null, and when one model fills several roles give it a single row listing both roles instead of repeating it; (c) one or two sentences naming why bestValue is the pick, and what premiumCostMultiple buys in premiumQualityGain points; (d) one sentence on a trap, taken from falseBargains or overpriced, naming the model and the figure that exposes it. Mention coverage below 1.0 or a latencyStatus of unknown when it affects how much to trust a pick.",
+    "4. H2 Cheaper substitutions — a table from valueAnalysis.substitutions: Workload | Expensive model | $/month | Cheaper alternative | $/month | Saved | Quality change. One sentence on when the swap is not worth it.",
+    "5. H2 Trends — H3 new/rising labs; H3 open vs closed using field ow (1 = open-weight heuristic, 0 = proprietary); H3 price, speed, and intelligence shifts by release cohort when dates exist.",
+    "6. H2 Other standouts — H3 fastest; H3 strongest intelligence; H3 coding standouts; H3 notable gaps or missing data.",
+    "7. H2 Method and caveats — a short bullet list: the token mixes are assumptions, not measurements from your traffic; quality is normalized against the strongest model in this snapshot, so scores move as the catalog grows; success rates are benchmark pass rates standing in for production reliability; prices exclude prompt caching, batch discounts, and committed-use pricing, which matter most for the input-heavy workloads; latency is unpublished for most models, which only excludes them from the interactive workload; the open-weight flag is a heuristic; state pricedModelCount and unpricedModelCount from the value analysis.",
     "",
-    "Be specific: always name real models from the catalog. Keep the report easy to scan on a laptop — about 800–1400 words, tables and bullets over essays.",
+    "Translate every table header and row label into the target language. Be specific: always name real models from the catalog. Keep it scannable — about 1200–1800 words, tables and bullets over essays. No section may repeat the same trap model as another section unless the figures genuinely differ.",
   ].join("\n")
 
-  return { system, prompt }
+  return { system, prompt, valueAnalysis: value }
 }

@@ -18,10 +18,10 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { PasswordDialog } from "@/components/explorer/password-dialog"
 import { exportReportPdf } from "@/components/report/export-report-pdf"
 import { ReportMarkdown } from "@/components/report/report-markdown"
+import { ValueExplorer } from "@/components/report/value-explorer"
 import { formatDate, timeAgo } from "@/lib/aa/format"
 import { downloadMarkdownFile, reportDownloadBasename } from "@/lib/aa/report-download"
 import type { CatalogReport } from "@/lib/aa/types"
-import { LOCALE_META, parseLocale } from "@/lib/i18n/locales"
 import { useI18n } from "@/lib/i18n/provider"
 
 function errorMessage(
@@ -55,20 +55,23 @@ export function ReportExplorer({
   const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [passwordOpen, setPasswordOpen] = useState(false)
 
-  const loadReport = useCallback(async (signal?: AbortSignal) => {
-    setLoadState("loading")
-    try {
-      const response = await fetch("/api/report", { signal, cache: "no-store" })
-      if (!response.ok) throw new Error("load failed")
-      const body = (await response.json()) as { report: CatalogReport | null }
-      if (signal?.aborted) return
-      setReport(body.report)
-      setLoadState("ready")
-    } catch (error) {
-      if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) return
-      setLoadState("error")
-    }
-  }, [])
+  const loadReport = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoadState("loading")
+      try {
+        const response = await fetch(`/api/report?locale=${locale}`, { signal, cache: "no-store" })
+        if (!response.ok) throw new Error("load failed")
+        const body = (await response.json()) as { report: CatalogReport | null }
+        if (signal?.aborted) return
+        setReport(body.report)
+        setLoadState("ready")
+      } catch (error) {
+        if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) return
+        setLoadState("error")
+      }
+    },
+    [locale],
+  )
 
   useEffect(() => {
     const controller = new AbortController()
@@ -82,7 +85,7 @@ export function ReportExplorer({
       const response = await fetch("/api/report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ password, locale }),
       })
       const body = (await response.json()) as { ok?: boolean; error?: string; report?: CatalogReport }
       if (!response.ok || !body.ok || !body.report) {
@@ -126,9 +129,6 @@ export function ReportExplorer({
   }
 
   const stale = Boolean(report && report.snapshotSyncedAt !== snapshotSyncedAt)
-  const reportLocale = report ? parseLocale(report.locale) : null
-  const localeMismatch = Boolean(report && reportLocale && reportLocale !== locale)
-  const reportLocaleName = reportLocale ? LOCALE_META[reportLocale].nativeName : report?.locale
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -206,23 +206,20 @@ export function ReportExplorer({
               </div>
             </div>
 
-            {(stale || localeMismatch) && (
-              <div className="grid gap-2">
-                {stale && (
-                  <Alert>
-                    <InfoIcon />
-                    <AlertDescription>{t("report.staleHint")}</AlertDescription>
-                  </Alert>
-                )}
-                {localeMismatch && (
-                  <Alert>
-                    <InfoIcon />
-                    <AlertDescription>
-                      {t("report.localeMismatch", { locale: reportLocaleName ?? report.locale })}
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </div>
+            {stale && (
+              <Alert>
+                <InfoIcon />
+                <AlertDescription>{t("report.staleHint")}</AlertDescription>
+              </Alert>
+            )}
+
+            {report.valueAnalysis ? (
+              <ValueExplorer analysis={report.valueAnalysis} />
+            ) : (
+              <Alert>
+                <InfoIcon />
+                <AlertDescription>{t("value.legacyReport")}</AlertDescription>
+              </Alert>
             )}
 
             <ReportMarkdown text={report.markdown} />

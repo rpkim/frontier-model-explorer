@@ -1,4 +1,5 @@
 import { z } from "zod"
+import type { ValueAnalysis } from "./value"
 
 // Raw response shape from the Artificial Analysis Data API
 // GET https://artificialanalysis.ai/api/v2/data/llms/models
@@ -186,6 +187,8 @@ export interface CatalogReport {
   modelCount: number
   model: string
   snapshotSyncedAt: string
+  /** Deterministic value-for-money figures the report narrates. Absent on reports generated before this existed. */
+  valueAnalysis?: ValueAnalysis
 }
 
 /** Compact Hub + catalog facts used to ground a per-model serving guide. */
