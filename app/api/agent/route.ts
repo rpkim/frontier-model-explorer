@@ -8,10 +8,14 @@ import {
 } from "ai"
 import { getLatestSnapshot } from "@/app/actions/sync"
 import { CATALOG_FIELD_LEGEND, serializeCatalogForAgent } from "@/lib/aa/catalog-for-agent"
+import { isAgentEnabled, isGeminiConfigured } from "@/lib/aa/env"
+import { clientIpFromRequest, checkRateLimit } from "@/lib/aa/rate-limit"
 import { getRequestLocale } from "@/lib/i18n/server"
 import type { Locale } from "@/lib/i18n/locales"
 
 export const maxDuration = 60
+
+const AGENT_RATE = { limit: 30, windowMs: 60_000 }
 
 const REPLY_LANGUAGE: Record<Locale, string> = {
   ko: "Korean",
@@ -53,8 +57,21 @@ function buildSystemPrompt({
 }
 
 export async function POST(req: Request) {
-  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+  if (!isAgentEnabled()) {
+    return new Response("AGENT_DISABLED", { status: 503 })
+  }
+
+  if (!isGeminiConfigured()) {
     return new Response("LLM_KEY_MISSING", { status: 503 })
+  }
+
+  const ip = clientIpFromRequest(req)
+  const rate = checkRateLimit(`agent:${ip}`, AGENT_RATE)
+  if (!rate.allowed) {
+    return new Response("RATE_LIMITED", {
+      status: 429,
+      headers: { "Retry-After": String(rate.retryAfterSec) },
+    })
   }
 
   const snapshot = await getLatestSnapshot()

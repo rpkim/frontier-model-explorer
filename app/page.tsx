@@ -5,12 +5,14 @@ import { SyncEmptyState } from "@/components/explorer/sync-empty-state"
 import { AgentWidget } from "@/components/agent/agent-widget"
 import { getLatestHubSnapshot } from "@/app/actions/hub"
 import { getLatestSnapshot } from "@/app/actions/sync"
+import { isAgentEnabled, isGeminiConfigured } from "@/lib/aa/env"
 
 export const maxDuration = 300
 
 export default async function Page() {
   const [snapshot, hub] = await Promise.all([getLatestSnapshot(), getLatestHubSnapshot()])
   const hasSnapshot = Boolean(snapshot && snapshot.models.length > 0)
+  const showAgent = isAgentEnabled() && isGeminiConfigured()
 
   return (
     <main className="flex h-dvh flex-col">
@@ -28,7 +30,7 @@ export default async function Page() {
           <SyncEmptyState />
         </div>
       )}
-      <AgentWidget hasSnapshot={hasSnapshot} />
+      {showAgent ? <AgentWidget hasSnapshot={hasSnapshot} /> : null}
     </main>
   )
 }

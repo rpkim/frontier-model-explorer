@@ -27,13 +27,15 @@ export function SyncButton({ variant = "outline" }: { variant?: "outline" | "def
         router.refresh()
       } else {
         const description =
-          result.error === "UNKNOWN_SYNC_ERROR"
-            ? t("sync.unknownError")
-            : result.error === "INVALID_SYNC_PASSWORD"
-              ? t("sync.invalidPassword")
-              : result.error === "SYNC_PASSWORD_NOT_CONFIGURED"
-                ? t("sync.passwordNotConfigured")
-                : result.error
+          result.error === "INVALID_SYNC_PASSWORD"
+            ? t("sync.invalidPassword")
+            : result.error === "SYNC_PASSWORD_NOT_CONFIGURED"
+              ? t("sync.passwordNotConfigured")
+              : result.error === "AA_API_NOT_CONFIGURED"
+                ? t("sync.apiNotConfigured")
+                : result.error?.startsWith("AA_API_") || result.error === "SYNC_FAILED"
+                  ? t("sync.unknownError")
+                  : result.error ?? t("sync.unknownError")
         toast.error(t("sync.failed"), { description })
       }
     })

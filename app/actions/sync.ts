@@ -24,9 +24,12 @@ export async function syncModels(password: string): Promise<SyncResult> {
     revalidatePath("/")
     return { ok: true, snapshot }
   } catch (error) {
-    const message = error instanceof AAApiError ? error.message : "UNKNOWN_SYNC_ERROR"
     console.error("[v0] syncModels failed:", error)
-    return { ok: false, error: message }
+    if (error instanceof AAApiError) {
+      if (error.message.includes("not configured")) return { ok: false, error: "AA_API_NOT_CONFIGURED" }
+      return { ok: false, error: error.status ? `AA_API_HTTP_${error.status}` : "AA_API_ERROR" }
+    }
+    return { ok: false, error: "SYNC_FAILED" }
   }
 }
 
