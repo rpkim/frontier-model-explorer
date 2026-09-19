@@ -10,13 +10,16 @@ import {
   writeReport,
 } from "@/lib/aa/report"
 import type { CatalogReport } from "@/lib/aa/types"
+import { parseLocale } from "@/lib/i18n/locales"
 import { getRequestLocale } from "@/lib/i18n/server"
 
 export const maxDuration = 120
 export const dynamic = "force-dynamic"
 
-export async function GET() {
-  const report = await readReport()
+export async function GET(req: Request) {
+  const requested = parseLocale(new URL(req.url).searchParams.get("locale") ?? "")
+  const locale = requested ?? (await getRequestLocale())
+  const report = await readReport(locale)
   return Response.json({ report }, { headers: { "Cache-Control": "no-store" } })
 }
 
@@ -25,7 +28,7 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: "LLM_KEY_MISSING" }, { status: 503 })
   }
 
-  let body: { password?: unknown }
+  let body: { password?: unknown; locale?: unknown }
   try {
     body = await req.json()
   } catch {
@@ -44,8 +47,8 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: "NO_SNAPSHOT" }, { status: 400 })
   }
 
-  const locale = await getRequestLocale()
-  const { system, prompt } = buildReportPrompt({
+  const locale = parseLocale(typeof body.locale === "string" ? body.locale : "") ?? (await getRequestLocale())
+  const { system, prompt, valueAnalysis } = buildReportPrompt({
     models: snapshot.models,
     syncedAt: snapshot.syncedAt,
     locale,
@@ -66,12 +69,13 @@ export async function POST(req: Request) {
       modelCount: snapshot.models.length,
       model: REPORT_MODEL_ID,
       snapshotSyncedAt: snapshot.syncedAt,
+      valueAnalysis,
     }
 
     await writeReport(report)
     return Response.json({ ok: true, report })
   } catch (error) {
-    console.error("[v0] Report generation failed:", error)
+    console.error("Report generation failed:", error)
     return Response.json({ ok: false, error: "GENERATION_FAILED" }, { status: 500 })
   }
 }

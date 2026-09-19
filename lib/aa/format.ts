@@ -52,6 +52,17 @@ function trimZeros(value: number): string {
   return Number(value.toFixed(digits)).toString()
 }
 
+/** USD across the range this app needs: sub-cent per-task costs up to five-figure monthly bills. */
+export function formatUsd(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—"
+  if (value === 0) return "$0"
+  if (value >= 1000) return `$${Math.round(value).toLocaleString("en-US")}`
+  if (value >= 1) return `$${value.toFixed(2)}`
+  if (value >= 0.01) return `$${value.toFixed(3)}`
+  if (value >= 0.00001) return `$${value.toFixed(5)}`
+  return `$${value.toExponential(1)}`
+}
+
 export function formatPercent(value: number | null): string {
   if (value === null) return "—"
   return `${(value * 100).toFixed(1)}%`
