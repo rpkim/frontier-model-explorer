@@ -40,19 +40,23 @@ function compactModel(
 
 export interface SerializedCatalog {
   json: string
+  /** The rows the JSON encodes, for callers that need the numbers rather than the text. */
+  rows: Record<string, unknown>[]
   modelCount: number
   truncatedFields: boolean
 }
 
 export function serializeCatalogForAgent(models: ModelNode[]): SerializedCatalog {
-  const withBenchmarks = JSON.stringify(models.map((model) => compactModel(model, true)))
-  if (withBenchmarks.length <= MAX_JSON_CHARS) {
-    return { json: withBenchmarks, modelCount: models.length, truncatedFields: false }
+  const withBenchmarks = models.map((model) => compactModel(model, true))
+  const json = JSON.stringify(withBenchmarks)
+  if (json.length <= MAX_JSON_CHARS) {
+    return { json, rows: withBenchmarks, modelCount: models.length, truncatedFields: false }
   }
 
-  const withoutBenchmarks = JSON.stringify(models.map((model) => compactModel(model, false)))
+  const withoutBenchmarks = models.map((model) => compactModel(model, false))
   return {
-    json: withoutBenchmarks,
+    json: JSON.stringify(withoutBenchmarks),
+    rows: withoutBenchmarks,
     modelCount: models.length,
     truncatedFields: true,
   }

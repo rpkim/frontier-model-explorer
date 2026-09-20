@@ -1,4 +1,7 @@
 import { z } from "zod"
+import type { CatalogChangelog } from "./changelog"
+import type { FigureAudit } from "./figure-audit"
+import type { ServingPlan } from "./sizing"
 import type { ValueAnalysis } from "./value"
 
 // Raw response shape from the Artificial Analysis Data API
@@ -189,6 +192,10 @@ export interface CatalogReport {
   snapshotSyncedAt: string
   /** Deterministic value-for-money figures the report narrates. Absent on reports generated before this existed. */
   valueAnalysis?: ValueAnalysis
+  /** Snapshot-over-snapshot diff. Null when this is the first report, absent on older blobs. */
+  changelog?: CatalogChangelog | null
+  /** Mechanical check that printed $ and % figures exist in the grounded JSON. */
+  figureAudit?: FigureAudit
 }
 
 /** Compact Hub + catalog facts used to ground a per-model serving guide. */
@@ -223,6 +230,8 @@ export interface ModelGuide {
   markdown: string
   hardwareContext: GuideHardwareContext
   geminiModel: string
+  /** Deterministic SKU layout and serve commands. Absent on guides generated before this existed. */
+  sizing?: ServingPlan
 }
 
 export interface GuideIndexEntry {

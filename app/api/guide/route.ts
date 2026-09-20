@@ -14,6 +14,7 @@ import {
 } from "@/lib/aa/guide"
 import { requireSyncPassword } from "@/lib/aa/protect"
 import { unwrapMarkdown } from "@/lib/aa/report"
+import { planServing } from "@/lib/aa/sizing"
 import type { ModelGuide } from "@/lib/aa/types"
 import { parseLocale } from "@/lib/i18n/locales"
 import { getRequestLocale } from "@/lib/i18n/server"
@@ -22,9 +23,11 @@ export const maxDuration = 120
 export const dynamic = "force-dynamic"
 
 export async function GET(req: Request) {
-  const modelId = new URL(req.url).searchParams.get("modelId")
-  const index = await readGuideIndex()
-  const guide = modelId ? await readGuide(modelId) : null
+  const params = new URL(req.url).searchParams
+  const locale = parseLocale(params.get("locale")) ?? (await getRequestLocale())
+  const modelId = params.get("modelId")
+  const index = await readGuideIndex(locale)
+  const guide = modelId ? await readGuide(locale, modelId) : null
   return Response.json({ index, guide }, { headers: { "Cache-Control": "no-store" } })
 }
 
@@ -72,7 +75,8 @@ export async function POST(req: Request) {
 
   const locale = parseLocale(typeof body.locale === "string" ? body.locale : "") ?? (await getRequestLocale())
   const hardwareContext = buildHardwareContext(model, detail)
-  const { system, prompt } = buildGuidePrompt({ context: hardwareContext, locale })
+  const sizing = planServing(hardwareContext)
+  const { system, prompt } = buildGuidePrompt({ context: hardwareContext, locale, sizing })
 
   try {
     const result = await generateText({
@@ -91,12 +95,13 @@ export async function POST(req: Request) {
       markdown: unwrapMarkdown(result.text),
       hardwareContext,
       geminiModel: GUIDE_MODEL_ID,
+      sizing,
     }
 
     await writeGuide(guide)
     return Response.json({ ok: true, guide })
   } catch (error) {
-    console.error("[v0] Guide generation failed:", error)
+    console.error("Guide generation failed:", error)
     return Response.json({ ok: false, error: "GENERATION_FAILED" }, { status: 500 })
   }
 }

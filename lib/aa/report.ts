@@ -1,9 +1,10 @@
 import { get, put } from "@vercel/blob"
 import { CATALOG_FIELD_LEGEND, serializeCatalogForAgent } from "./catalog-for-agent"
 import { isOpenWeight } from "./filter"
-import { analyzeValue, type ValueAnalysis } from "./value"
+import type { ValueAnalysis } from "./value"
 import { WORKLOAD_IDS, type WorkloadId } from "./workloads"
-import { LOCALES, type Locale } from "@/lib/i18n/locales"
+import type { CatalogChangelog } from "./changelog"
+import { LANGUAGE_NAMES, LOCALES, type Locale } from "@/lib/i18n/locales"
 import type { CatalogReport, ModelNode } from "./types"
 
 /** Legacy single-report path, kept so reports written before per-locale storage still load. */
@@ -12,13 +13,6 @@ export const REPORT_MODEL_ID = "gemini-3.5-flash"
 
 export function reportBlobPathname(locale: Locale): string {
   return `frontier-models/reports/${locale}.json`
-}
-
-const REPORT_LANGUAGE: Record<Locale, string> = {
-  ko: "Korean",
-  en: "English",
-  ja: "Japanese",
-  zh: "Simplified Chinese",
 }
 
 function round(value: number, digits: number): number {
@@ -223,14 +217,24 @@ export function buildReportPrompt({
   models,
   syncedAt,
   locale,
+  changelog,
+  valueAnalysis,
 }: {
   models: ModelNode[]
   syncedAt: string
   locale: Locale
-}): { system: string; prompt: string; valueAnalysis: ValueAnalysis } {
+  changelog: CatalogChangelog | null
+  valueAnalysis: ValueAnalysis
+}): {
+  system: string
+  prompt: string
+  valueAnalysis: ValueAnalysis
+  catalogRows: Record<string, unknown>[]
+  summary: ReturnType<typeof summarizeCatalog>
+} {
   const catalog = serializeCatalogForAgent(models)
   const summary = summarizeCatalog(models)
-  const value = analyzeValue(models)
+  const value = valueAnalysis
   const truncationNote = catalog.truncatedFields
     ? `Per-model benchmark scores (field b) were omitted so all ${catalog.modelCount} models could fit. Indexes, prices, speed, open-weight flags, and release dates are still present.`
     : `The catalog includes all ${catalog.modelCount} models with available indexes, prices, speed, and benchmark scores.`
@@ -244,15 +248,19 @@ export function buildReportPrompt({
     "Never print JSON field names, workload ids, or camelCase identifiers in the report. Refer to each concept by a natural phrase in the target language instead.",
     "Prefix every monetary figure with $ and keep the precision given in the JSON.",
     "Prefer tables, short bullets, and 1–3 blockquote callouts over long prose.",
-    `Write the entire report in ${REPORT_LANGUAGE[locale]}, including every section title. Do not mix in words from any other language except model, provider, and benchmark names, which stay as written in the catalog.`,
+    "The app already renders a decision brief, per-task value tables, substitutions, and a what-changed panel from this JSON. Do not reprint those tables. Your job is interpretation: why the pick is the pick, when a swap is a bad idea, and what the catalog movement means.",
+    `Write the entire report in ${LANGUAGE_NAMES[locale]}, including every section title. Do not mix in words from any other language except model, provider, and benchmark names, which stay as written in the catalog.`,
     `Snapshot synced at: ${syncedAt}. Catalog size: ${catalog.modelCount} models.`,
     truncationNote,
     `Catalog field legend: ${CATALOG_FIELD_LEGEND}.`,
     `Value analysis legend: ${VALUE_FIELD_LEGEND}.`,
     "Precomputed summary JSON (use these figures for the executive snapshot):",
     JSON.stringify(summary),
-    "Precomputed value analysis JSON (the only source for the value-by-task section):",
+    "Precomputed value analysis JSON:",
     JSON.stringify(value),
+    changelog
+      ? `Precomputed changelog JSON (the only source for the what-changed section):\n${JSON.stringify(changelog)}`
+      : "No previous baseline exists for this catalog — omit the what-changed section.",
     "Catalog JSON:",
     catalog.json,
   ].join("\n")
@@ -261,17 +269,20 @@ export function buildReportPrompt({
     "Write a GitHub-flavored markdown catalog report with this section order. Do not wrap the document in a code fence.",
     "",
     "1. H1 title — short, specific to this snapshot.",
-    "2. H2 Executive snapshot — a compact markdown table of 4–6 headline stats (metric | value), then one short interpretation paragraph.",
-    "3. H2 Value by task. Open with two or three sentences explaining that cheap is not the same as good value: the ranking metric is cost per successful task at each workload's own token mix, so a model with a low sticker price and a weak success rate can cost more per delivered result. Then write one H3 per workload from valueAnalysis.workloads, in the given order:",
+    "2. H2 Executive snapshot — a compact markdown table of 4–6 headline stats (metric | value), then one short paragraph that states the decision: for most teams the knee of the frontier is the buy; paying up to premium is only worth it when the quality gain is named.",
+    "3. H2 Why these picks — one short paragraph per workload from valueAnalysis.workloads, in the given order:",
     `   ${workloadSectionInstruction()}.`,
-    "   Each H3 must contain, in this order: (a) one italic line stating the assumed workload — input and output tokens per task, the token ratio, monthly task volume, the quality floor stated as \"models must rank in the top N% on quality\" using qualityFloorTopPercent, the latency class in plain words, and the number of models left out for unpublished latency when that count is above zero; (b) a table with columns Role | Model | Provider | Quality | Success rate | $/task | $/month covering bestValue, runnerUp, budget, and premium — skip any that are null, and when one model fills several roles give it a single row listing both roles instead of repeating it; (c) one or two sentences naming why bestValue is the pick, and what premiumCostMultiple buys in premiumQualityGain points; (d) one sentence on a trap, taken from falseBargains or overpriced, naming the model and the figure that exposes it. Mention coverage below 1.0 or a latencyStatus of unknown when it affects how much to trust a pick.",
-    "4. H2 Cheaper substitutions — a table from valueAnalysis.substitutions: Workload | Expensive model | $/month | Cheaper alternative | $/month | Saved | Quality change. One sentence on when the swap is not worth it.",
-    "5. H2 Trends — H3 new/rising labs; H3 open vs closed using field ow (1 = open-weight heuristic, 0 = proprietary); H3 price, speed, and intelligence shifts by release cohort when dates exist.",
-    "6. H2 Other standouts — H3 fastest; H3 strongest intelligence; H3 coding standouts; H3 notable gaps or missing data.",
-    "7. H2 Method and caveats — a short bullet list: the token mixes are assumptions, not measurements from your traffic; quality is normalized against the strongest model in this snapshot, so scores move as the catalog grows; success rates are benchmark pass rates standing in for production reliability; prices exclude prompt caching, batch discounts, and committed-use pricing, which matter most for the input-heavy workloads; latency is unpublished for most models, which only excludes them from the interactive workload; the open-weight flag is a heuristic; state pricedModelCount and unpricedModelCount from the value analysis.",
+    "   Each paragraph names bestValue, what premiumCostMultiple buys in premiumQualityGain points, and one trap from falseBargains or overpriced. No tables. Mention coverage below 1.0 or unpublished latency when it affects trust.",
+    "4. H2 When not to switch — using substitutions, one sentence per row on the case where keeping the expensive model is still right (regulated eval suites, unpublished latency, quality floor for that workload). No table.",
+    changelog
+      ? "5. H2 What changed — narrate the changelog JSON in bullets: new/retired models, the largest price moves, and any workload whose best-value pick changed. Copy the names and percents from the JSON."
+      : "5. Omit any what-changed heading — there is no previous baseline.",
+    "6. H2 Trends — H3 new/rising labs; H3 open vs closed using field ow (1 = open-weight heuristic, 0 = proprietary); H3 price, speed, and intelligence shifts by release cohort when dates exist.",
+    "7. H2 Other standouts — H3 fastest; H3 strongest intelligence; H3 coding standouts; H3 unpriced open-weight watchlist from valueAnalysis.unpricedWatchlist (these have no API price — they are self-hosting candidates, not free); H3 notable gaps or missing data.",
+    "8. H2 Method and caveats — a short bullet list: the token mixes are assumptions, not measurements from your traffic; quality is normalized against the strongest model in this snapshot, so scores move as the catalog grows; success rates are benchmark pass rates standing in for production reliability; prices exclude prompt caching, batch discounts, and committed-use pricing, which matter most for the input-heavy workloads; latency is unpublished for most models, which only excludes them from the interactive workload; the open-weight flag is a heuristic; state pricedModelCount and unpricedModelCount from the value analysis.",
     "",
-    "Translate every table header and row label into the target language. Be specific: always name real models from the catalog. Keep it scannable — about 1200–1800 words, tables and bullets over essays. No section may repeat the same trap model as another section unless the figures genuinely differ.",
+    "Translate every heading into the target language. Be specific: always name real models from the catalog. Keep it scannable — about 900–1400 words, bullets over essays. Do not reprint the decision brief or the per-task cost tables.",
   ].join("\n")
 
-  return { system, prompt, valueAnalysis: value }
+  return { system, prompt, valueAnalysis: value, catalogRows: catalog.rows, summary }
 }

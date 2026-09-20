@@ -102,16 +102,32 @@ export interface ValueAnalysis {
   unpricedModelCount: number
   /** Substitution candidates for the priciest high-quality models. */
   substitutions: Substitution[]
+  /**
+   * High-intelligence models with no API price. These are not "free" — they are
+   * the self-hosting candidates the Guides tab is for.
+   */
+  unpricedWatchlist: WatchlistModel[]
 }
 
 export interface Substitution {
   workloadId: WorkloadId
+  expensiveId?: string
   expensive: string
   expensiveMonthlyCostUsd: number
+  alternativeId?: string
   alternative: string
   alternativeMonthlyCostUsd: number
   savingsPercent: number
   qualityDelta: number
+}
+
+export interface WatchlistModel {
+  modelId: string
+  name: string
+  provider: string
+  openWeight: boolean
+  intelligenceIndex: number | null
+  codingIndex: number | null
 }
 
 function round(value: number, digits: number): number {
@@ -422,8 +438,10 @@ function buildSubstitutions(analyses: WorkloadValueAnalysis[]): Substitution[] {
 
     substitutions.push({
       workloadId: analysis.workloadId,
+      expensiveId: premium.modelId,
       expensive: premium.name,
       expensiveMonthlyCostUsd: premium.monthlyCostUsd,
+      alternativeId: alternative.modelId,
       alternative: alternative.name,
       alternativeMonthlyCostUsd: alternative.monthlyCostUsd,
       savingsPercent: round(
@@ -444,10 +462,29 @@ export function analyzeValue(models: ModelNode[]): ValueAnalysis {
   )
   const workloads = WORKLOAD_PROFILE_LIST.map((profile) => analyzeWorkload(models, profile, maxima))
 
+  const unpricedWatchlist = models
+    .filter(
+      (model) =>
+        (model.priceInputPerM == null || model.priceOutputPerM == null) &&
+        isOpenWeight(model) &&
+        model.intelligenceIndex != null,
+    )
+    .sort((a, b) => (b.intelligenceIndex ?? 0) - (a.intelligenceIndex ?? 0))
+    .slice(0, 8)
+    .map((model) => ({
+      modelId: model.id,
+      name: model.name,
+      provider: model.provider.name,
+      openWeight: true,
+      intelligenceIndex: model.intelligenceIndex != null ? round(model.intelligenceIndex, 1) : null,
+      codingIndex: model.codingIndex != null ? round(model.codingIndex, 1) : null,
+    }))
+
   return {
     workloads,
     pricedModelCount: priced.length,
     unpricedModelCount: models.length - priced.length,
     substitutions: buildSubstitutions(workloads),
+    unpricedWatchlist,
   }
 }
