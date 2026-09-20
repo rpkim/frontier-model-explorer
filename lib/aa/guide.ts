@@ -1,43 +1,30 @@
-import { get, put } from "@vercel/blob"
-import type { Locale } from "@/lib/i18n/locales"
+import { BlobNotFoundError, del, get, put } from "@vercel/blob"
+import { DEFAULT_LOCALE, LANGUAGE_NAMES, parseLocale, type Locale } from "@/lib/i18n/locales"
+import { type ServingPlan } from "./sizing"
 import type { GuideHardwareContext, GuideIndex, HubDetail, ModelGuide, ModelNode } from "./types"
 
-export const GUIDE_INDEX_PATHNAME = "frontier-models/guides/index.json"
-export const GUIDE_MODEL_ID = "gemini-3.5-flash"
+export { hasUsableHubDetail } from "./hub-ready"
 
-const GUIDE_LANGUAGE: Record<Locale, string> = {
-  ko: "Korean",
-  en: "English",
-  ja: "Japanese",
-  zh: "Simplified Chinese",
-}
+/** Layout before guides were stored per locale, kept only so old guides can be migrated. */
+const LEGACY_GUIDE_INDEX_PATHNAME = "frontier-models/guides/index.json"
+
+export const GUIDE_MODEL_ID = "gemini-3.5-flash"
 
 function round(value: number, digits: number): number {
   const factor = 10 ** digits
   return Math.round(value * factor) / factor
 }
 
-export function guideBlobPath(modelId: string): string {
-  const safe = modelId.replace(/[^a-zA-Z0-9._-]/g, "_")
-  return `frontier-models/guides/${safe}.json`
+function modelSlug(modelId: string): string {
+  return modelId.replace(/[^a-zA-Z0-9._-]/g, "_")
 }
 
-const BLOCKING_HUB_ERRORS = new Set([
-  "unmapped",
-  "not_found",
-  "timeout",
-  "rate_limited",
-  "fetch_failed",
-])
+export function guideBlobPath(locale: Locale, modelId: string): string {
+  return `frontier-models/guides/${locale}/${modelSlug(modelId)}.json`
+}
 
-export function hasUsableHubDetail(detail: HubDetail | null | undefined): boolean {
-  if (!detail) return false
-  if (detail.error && BLOCKING_HUB_ERRORS.has(detail.error)) return false
-  return (
-    (detail.parameterCount != null && detail.parameterCount > 0) ||
-    (detail.modelSizeBytes != null && detail.modelSizeBytes > 0) ||
-    Boolean(detail.vramEstimate)
-  )
+export function guideIndexPathname(locale: Locale): string {
+  return `frontier-models/guides/${locale}/index.json`
 }
 
 export function buildHardwareContext(model: ModelNode, detail: HubDetail): GuideHardwareContext {
@@ -64,8 +51,6 @@ export function buildHardwareContext(model: ModelNode, detail: HubDetail): Guide
   if (model.intelligenceIndex != null) ctx.intelligenceIndex = round(model.intelligenceIndex, 1)
   if (model.codingIndex != null) ctx.codingIndex = round(model.codingIndex, 1)
   if (model.mathIndex != null) ctx.mathIndex = round(model.mathIndex, 1)
-  if (model.outputTokensPerSecond != null) ctx.outputTokensPerSecond = round(model.outputTokensPerSecond, 1)
-  if (model.timeToFirstTokenSeconds != null) ctx.timeToFirstTokenSeconds = round(model.timeToFirstTokenSeconds, 3)
   if (Object.keys(benches).length > 0) ctx.benchmarks = benches
   return ctx
 }
@@ -104,40 +89,69 @@ async function readJsonBlob(pathname: string): Promise<unknown | null> {
     const text = await new Response(result.stream).text()
     return JSON.parse(text) as unknown
   } catch (error) {
-    console.error("[v0] Failed to read guide blob:", pathname, error)
+    if (error instanceof BlobNotFoundError) return null
+    console.error("Failed to read guide blob:", pathname, error)
     return null
   }
 }
 
-export async function readGuideIndex(): Promise<GuideIndex> {
-  const parsed = await readJsonBlob(GUIDE_INDEX_PATHNAME)
-  return isGuideIndex(parsed) ? parsed : {}
-}
-
-export async function readGuide(modelId: string): Promise<ModelGuide | null> {
-  const parsed = await readJsonBlob(guideBlobPath(modelId))
-  return isModelGuide(parsed) ? parsed : null
-}
-
-export async function writeGuide(guide: ModelGuide): Promise<ModelGuide> {
-  await put(guideBlobPath(guide.modelId), JSON.stringify(guide), {
+async function writeJsonBlob(pathname: string, value: unknown): Promise<void> {
+  await put(pathname, JSON.stringify(value), {
     access: "private",
     contentType: "application/json",
     addRandomSuffix: false,
     allowOverwrite: true,
   })
-  const index = await readGuideIndex()
+}
+
+/**
+ * Guides once shared one blob per model, so regenerating in another language
+ * silently overwrote the previous version. Re-files each old guide under the
+ * locale it was actually written in, then drops the legacy index so this runs
+ * at most once. Writes are idempotent, so overlapping requests are harmless.
+ */
+async function migrateLegacyGuides(): Promise<void> {
+  const legacyIndex = await readJsonBlob(LEGACY_GUIDE_INDEX_PATHNAME)
+  if (!isGuideIndex(legacyIndex)) return
+
+  for (const modelId of Object.keys(legacyIndex)) {
+    const legacyPath = `frontier-models/guides/${modelSlug(modelId)}.json`
+    const parsed = await readJsonBlob(legacyPath)
+    if (!isModelGuide(parsed) || !parseLocale(parsed.locale)) continue
+    await writeGuide(parsed)
+    await del(legacyPath).catch(() => undefined)
+  }
+
+  await del(LEGACY_GUIDE_INDEX_PATHNAME).catch(() => undefined)
+}
+
+export async function readGuideIndex(locale: Locale): Promise<GuideIndex> {
+  const parsed = await readJsonBlob(guideIndexPathname(locale))
+  if (isGuideIndex(parsed)) return parsed
+
+  await migrateLegacyGuides()
+  const migrated = await readJsonBlob(guideIndexPathname(locale))
+  return isGuideIndex(migrated) ? migrated : {}
+}
+
+export async function readGuide(locale: Locale, modelId: string): Promise<ModelGuide | null> {
+  const parsed = await readJsonBlob(guideBlobPath(locale, modelId))
+  return isModelGuide(parsed) ? parsed : null
+}
+
+export async function writeGuide(guide: ModelGuide): Promise<ModelGuide> {
+  const locale = parseLocale(guide.locale) ?? DEFAULT_LOCALE
+  await writeJsonBlob(guideBlobPath(locale, guide.modelId), guide)
+
+  const indexPath = guideIndexPathname(locale)
+  const existing = await readJsonBlob(indexPath)
+  const index: GuideIndex = isGuideIndex(existing) ? existing : {}
   index[guide.modelId] = {
     generatedAt: guide.generatedAt,
     modelName: guide.modelName,
     hfId: guide.hfId,
   }
-  await put(GUIDE_INDEX_PATHNAME, JSON.stringify(index), {
-    access: "private",
-    contentType: "application/json",
-    addRandomSuffix: false,
-    allowOverwrite: true,
-  })
+  await writeJsonBlob(indexPath, index)
   return guide
 }
 
@@ -198,43 +212,56 @@ TPU recipes + XLA (source of record for TPU serving methodology: https://github.
 export function buildGuidePrompt({
   context,
   locale,
+  sizing,
 }: {
   context: GuideHardwareContext
   locale: Locale
+  sizing: ServingPlan
 }): { system: string; prompt: string } {
+  const tpuRequired = sizing.tpuJustified
   const system = [
     "You are a serving/infrastructure architect for Frontier Model Explorer.",
-    "Write a practical deployment guide for THIS open-weight model only.",
-    "Use ONLY the hardware JSON below for model size, dtype, VRAM estimates, and parameter counts.",
-    "Do not invent parameter counts, file sizes, or GPU memory numbers. If a field is missing, say unknown and plan conservatively.",
-    "VRAM figures are estimates (weights + ~20% overhead). Never claim a specific SKU 'will run' — say 'planning fit' vs 'too small unless quantized/sharded'.",
-    "Give 1–2 recommended configs for BOTH GPU and TPU: (A) budget inference (B) production long-context. Label all accelerator counts as estimates.",
-    "The executive recommendation MUST include TPU, not GPU only. Never skip TPU in that section.",
-    "For every TPU recommendation, follow AI-Hypercomputer/tpu-recipes methodology (XLA compile/cache, topologies, vLLM-TPU flags, recipe-style benches). Do not paste confidential or invented tok/s from that repo.",
-    "Catalog intelligence/coding scores and API tok/s are quality/API references, NOT local-cluster SLOs or GPU-sizing inputs.",
+    "Write a practical runbook for THIS open-weight model only.",
+    "Use ONLY the hardware JSON and the precomputed serving plan below for model size, dtype, VRAM, SKU counts, monthly cost, and serve commands.",
+    "Do not invent parameter counts, file sizes, GPU/TPU counts, topologies, or dollar figures. Copy SKU names, counts, monthlyUsd, and serve commands verbatim from the serving plan.",
+    "VRAM figures are estimates (weights + ~20% overhead, plus KV when kvCache4k is present). Never claim a specific SKU 'will run' — say 'planning fit'.",
+    tpuRequired
+      ? "The serving plan sets tpuJustified=true, so include a TPU path next to GPU."
+      : "The serving plan sets tpuJustified=false: this model fits a small GPU layout. Do NOT recommend TPU as a default. Mention TPU only as an optional scale-out, or omit it.",
+    "Catalog intelligence/coding scores are quality references, NOT cluster SLOs. There is no API tok/s in the hardware JSON; do not invent local throughput.",
     HARDWARE_PACK,
-    `Write the entire guide in ${GUIDE_LANGUAGE[locale]}. Translate section titles.`,
-    "Prefer tables and numbered steps. About 1100–1800 words. Do not wrap the document in a code fence.",
+    `Write the entire guide in ${LANGUAGE_NAMES[locale]}. Translate section titles.`,
+    "Prefer tables and numbered steps. About 800–1300 words. Do not wrap the document in a code fence.",
     "Hardware JSON:",
     JSON.stringify(context),
+    "Precomputed serving plan (the only source for SKUs, device counts, monthly cost, and serve commands):",
+    JSON.stringify(sizing),
   ].join("\n")
+
+  const tpuSections = tpuRequired
+    ? [
+        "4. H2 TPU path — use the TPU row from the serving plan (real gens: v5e / v6e Trillium / v5p / Ironwood TPU7x). Include H3 XLA tuning: static shapes, first-compile warmup, VLLM_XLA_CACHE_PATH, replica cache-write race, VLLM_TPU_MOST_MODEL_LEN, VLLM_TPU_BUCKET_PADDING_GAP (128). Link https://github.com/AI-Hypercomputer/tpu-recipes. Never recommend TPU v1 or a fictional TPU v8.",
+        "5. H2 Framework — paste the GPU serveCommand from the plan in a fenced shell block. If tpuServeCommand is present, paste it too. Gated weights: HF token. Do not invent flags that contradict the plan.",
+      ]
+    : [
+        "4. H2 TPU path — one short paragraph: TPU is not the default for this size. Name the GPU fit. Optional: the TPU row in the plan if you mention scale-out.",
+        "5. H2 Framework — paste the GPU serveCommand from the plan in a fenced shell block. Gated weights: HF token.",
+      ]
 
   const prompt = [
     "Write GitHub-flavored markdown with this section order (titles translated). Do not wrap the document in a code fence.",
     "",
     "1. H1 — model name + one-line serving thesis (budget vs production).",
-    "2. H2 Executive recommendation — MUST cover GPU and TPU equally. Required markdown table with columns: Path | Role | SKU / generation | Count | Topology (nodes or TPU slice/pod) | Orchestrator | Why. Required rows: (1) GPU budget (2) GPU production long-context (3) TPU budget (4) TPU production long-context. Use real TPU gens (v5e / v6e / v5p / Ironwood), never omit the TPU rows. Then 2–4 bullets: when to pick GPU vs TPU.",
-    "3. H2 GPU path — SKU options, GPU count, node layout (e.g. 8×H100), Kubernetes/GKE/Slurm/Ray, interconnect. Call out SKUs that are too small.",
-    "4. H2 TPU path — real generation (v5e / v6e Trillium / v5p / Ironwood TPU7x), chip count, topology (e.g. v6e 2x2/2x4, Ironwood 2x2x1), GCE TPU VM vs GKE + Cluster Toolkit, queued resources. Include H3 XLA tuning: static shapes, first-compile warmup, VLLM_XLA_CACHE_PATH, replica cache-write race, VLLM_TPU_MOST_MODEL_LEN, VLLM_TPU_BUCKET_PADDING_GAP (128), LIBTPU_INIT_ARGS for quantized matmul. Link https://github.com/AI-Hypercomputer/tpu-recipes as the reproduce-the-stack reference. Never recommend TPU v1 or a fictional TPU v8.",
-    "5. H2 Framework — GPU: vLLM and/or SGLang with example serve flags using hfId (TGI optional). TPU: vllm/vllm-tpu (tpu-inference JAX→XLA path) with a concrete `vllm serve` using this hfId, TP=chips, gpu-memory-utilization, max-num-batched-tokens (prefill vs decode), max-num-seqs, async-scheduling; JAX MaxText/Pax/JetStream as the training/native-JAX alternative. Gated weights: HF token. Docker privileged + large shm as in tpu-recipes.",
-    "6. H2 3D parallelism — concrete TP/PP/DP (EP if MoE) mapped to the GPU node fabric and a TPU topology.",
-    "7. H2 KV cache and long context — paged attention, prefix/session cache, KV quantization, when to disaggregate prefill/decode. Use kvCache4k if present to estimate 32k/128k at batch 1 and a small batch.",
-    "8. H2 Performance measurement — after the model is serving: metrics (TTFT, TPOT, ITL, throughput tok/s, goodput, GPU/TPU util, KV cache hit rate, queue depth). GPU: vLLM /metrics + DCGM. TPU: follow tpu-recipes — `vllm bench serve` random dataset; run a prefill-heavy and a decode-heavy sweep; note concurrency vs P99 TTFT; optional Ironwood 1k/8k and 8k/1k; XLA compile time as a separate SLO; Cloud TPU profiler. Do not treat catalog API tok/s as the cluster SLO and do not invent tpu-recipes throughput numbers.",
-    "9. H2 Benchmarks and quality checks — serving benches vs quality benches. Use catalog intelligence/coding/math and named scores as the pre-deploy quality baseline. After quantization or tensor-parallel serving, re-run a small eval (lm-eval subset, needle-in-haystack, or LongBench-style check) so quality does not silently regress.",
-    "10. H2 Optimization loop — GPU knobs: max_num_seqs / batch, chunked prefill, CUDA graphs, prefix cache, KV/weight quant, speculative decoding, replicas vs TP. TPU knobs (after XLA cache is warm): max-num-batched-tokens (512 decode vs 2048+ prefill), max-num-seqs, gpu-memory-utilization, KV FP8, bucket padding, MOST_MODEL_LEN, INT8/FP8 on v5e/v6e MXU, then more chips vs more replicas. Playbook: if first start is slow (compile/cache) / if TTFT is high / if throughput is low / if OOM on KV.",
-    "11. H2 Risks — OOM (weights vs KV), interconnect, gated weights, GGUF vs GPU serving if modelSizeSource is gguf, missing facts.",
+    "2. H2 Go / no-go — 4 bullets copied from the serving plan: (a) required HBM for budget and production targets (b) recommended GPU SKU × count and monthlyUsd (c) the serve command lives in the next section (d) incomplete=true means KV or weights were estimated — say so. The app also renders this table; keep this section to four bullets, no second SKU table.",
+    "3. H2 GPU path — explain the plan's GPU row: why that SKU, what is too small. Copy monthlyUsd. Orchestrator: Kubernetes/GKE for multi-GPU, a single workstation if count=1.",
+    ...tpuSections,
+    "6. H2 3D parallelism — TP equals the plan's GPU count within a node; PP only if count would exceed 8. EP only if tags/name suggest MoE.",
+    "7. H2 KV cache and long context — the plan already scaled kvCache4k to 8k/batch 8 and 32k/batch 4. Say what happens at 128k (linear in context). kvKnown=false means the KV term is a 30% buffer, not a measurement.",
+    "8. H2 Measure after deploy — TTFT, TPOT, throughput, KV hit rate, queue depth. GPU: vLLM /metrics + DCGM. Do not treat catalog API speed as the cluster SLO and do not invent tpu-recipes tok/s.",
+    "9. H2 Optimization loop — if first start is slow / if TTFT is high / if OOM on KV. GPU knobs: max-num-seqs, prefix cache, KV quant. TPU knobs only if tpuJustified.",
+    "10. H2 Risks — OOM (weights vs KV), gated weights, GGUF vs GPU serving if modelSizeSource is gguf, missing facts, list prices are planning estimates not quotes.",
     "",
-    "Be specific to this model's numbers. Keep it scannable (~1100–1800 words).",
+    "Be specific to this model's numbers. Keep it a runbook (~800–1300 words).",
   ].join("\n")
 
   return { system, prompt }

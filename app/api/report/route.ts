@@ -3,6 +3,13 @@ import { generateText } from "ai"
 import { getLatestSnapshot } from "@/app/actions/sync"
 import { requireSyncPassword } from "@/lib/aa/protect"
 import {
+  buildReportBaseline,
+  diffAgainstBaseline,
+  readReportBaseline,
+  writeReportBaseline,
+} from "@/lib/aa/changelog"
+import { auditReportFigures } from "@/lib/aa/figure-audit"
+import {
   REPORT_MODEL_ID,
   buildReportPrompt,
   readReport,
@@ -10,6 +17,7 @@ import {
   writeReport,
 } from "@/lib/aa/report"
 import type { CatalogReport } from "@/lib/aa/types"
+import { analyzeValue } from "@/lib/aa/value"
 import { parseLocale } from "@/lib/i18n/locales"
 import { getRequestLocale } from "@/lib/i18n/server"
 
@@ -48,10 +56,17 @@ export async function POST(req: Request) {
   }
 
   const locale = parseLocale(typeof body.locale === "string" ? body.locale : "") ?? (await getRequestLocale())
-  const { system, prompt, valueAnalysis } = buildReportPrompt({
+  const valueAnalysis = analyzeValue(snapshot.models)
+  const baseline = await readReportBaseline()
+  const changelog = baseline
+    ? diffAgainstBaseline({ baseline, models: snapshot.models, analysis: valueAnalysis })
+    : null
+  const { system, prompt, catalogRows, summary } = buildReportPrompt({
     models: snapshot.models,
     syncedAt: snapshot.syncedAt,
     locale,
+    changelog,
+    valueAnalysis,
   })
 
   try {
@@ -62,17 +77,30 @@ export async function POST(req: Request) {
       abortSignal: req.signal,
     })
 
+    const markdown = unwrapMarkdown(result.text)
+    const generatedAt = new Date().toISOString()
+    const figureAudit = auditReportFigures(markdown, [summary, valueAnalysis, changelog, catalogRows])
     const report: CatalogReport = {
-      generatedAt: new Date().toISOString(),
+      generatedAt,
       locale,
-      markdown: unwrapMarkdown(result.text),
+      markdown,
       modelCount: snapshot.models.length,
       model: REPORT_MODEL_ID,
       snapshotSyncedAt: snapshot.syncedAt,
       valueAnalysis,
+      changelog,
+      figureAudit,
     }
 
     await writeReport(report)
+    await writeReportBaseline(
+      buildReportBaseline({
+        models: snapshot.models,
+        analysis: valueAnalysis,
+        generatedAt,
+        snapshotSyncedAt: snapshot.syncedAt,
+      }),
+    )
     return Response.json({ ok: true, report })
   } catch (error) {
     console.error("Report generation failed:", error)

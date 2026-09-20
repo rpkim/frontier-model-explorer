@@ -19,6 +19,8 @@ import { PasswordDialog } from "@/components/explorer/password-dialog"
 import { exportReportPdf } from "@/components/report/export-report-pdf"
 import { ReportMarkdown } from "@/components/report/report-markdown"
 import { ValueExplorer } from "@/components/report/value-explorer"
+import { DecisionBrief } from "@/components/report/decision-brief"
+import { ChangelogPanel } from "@/components/report/changelog-panel"
 import { formatDate, timeAgo } from "@/lib/aa/format"
 import { downloadMarkdownFile, reportDownloadBasename } from "@/lib/aa/report-download"
 import type { CatalogReport } from "@/lib/aa/types"
@@ -132,7 +134,7 @@ export function ReportExplorer({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-5 sm:px-6">
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-5 sm:px-6">
         {generating ? (
           <GeneratingState />
         ) : loadState === "loading" ? (
@@ -213,14 +215,32 @@ export function ReportExplorer({
               </Alert>
             )}
 
+            {report.figureAudit && report.figureAudit.unverifiedCount > 0 && (
+              <Alert>
+                <InfoIcon />
+                <AlertDescription>
+                  {t("report.auditHint", {
+                    count: report.figureAudit.unverifiedCount,
+                    samples: report.figureAudit.samples.join(", "),
+                  })}
+                </AlertDescription>
+              </Alert>
+            )}
+
             {report.valueAnalysis ? (
-              <ValueExplorer analysis={report.valueAnalysis} />
+              <DecisionBrief analysis={report.valueAnalysis} />
             ) : (
               <Alert>
                 <InfoIcon />
                 <AlertDescription>{t("value.legacyReport")}</AlertDescription>
               </Alert>
             )}
+
+            {report.changelog && (
+              <ChangelogPanel changelog={report.changelog} locale={locale} />
+            )}
+
+            {report.valueAnalysis && <ValueExplorer analysis={report.valueAnalysis} />}
 
             <ReportMarkdown text={report.markdown} />
           </>

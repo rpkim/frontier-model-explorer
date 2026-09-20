@@ -170,13 +170,12 @@ The agent keeps the last 16 messages and compact catalog JSON up to ~280k charac
 
 ## i18n
 
-Locales: **`ko` (default)** · `en` · `ja` · `zh`.
+Locales: **`en` (default)** · `ko` · `ja` · `zh`.
 
-1. Cookie `fme-locale`
-2. Else `Accept-Language`
-3. Else `ko`
+1. Cookie `fme-locale` (set only when the visitor picks a language)
+2. Else `en`
 
-The header switcher writes the cookie. Document `lang`, meta title/description, UI copy, and Gemini reply language all follow this locale. Strings live in `lib/i18n/messages.ts`.
+`Accept-Language` is not consulted, so a first visit is always English regardless of browser language. Document `lang`, meta title/description, UI copy, and Gemini reply language all follow this locale. Strings live in `lib/i18n/messages.ts`.
 
 ---
 
@@ -270,7 +269,7 @@ lib/aa/
   hub.ts / hf-resolve.ts   # Hub mapping and VRAM
   guide.ts / report.ts     # Gemini prompts + blobs
   protect.ts / env.ts / rate-limit.ts
-lib/i18n/                  # locales, messages, cookie + Accept-Language
+lib/i18n/                  # locales, messages, cookie (English default)
 ```
 
 ---

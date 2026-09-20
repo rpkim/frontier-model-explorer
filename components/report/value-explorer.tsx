@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { ModelActions } from "@/components/explorer/model-actions"
 import { formatPercent, formatScore, formatUsd } from "@/lib/aa/format"
 import type { ModelValue, ValueAnalysis, WorkloadValueAnalysis } from "@/lib/aa/value"
 import { WORKLOAD_IDS, type WorkloadId } from "@/lib/aa/workloads"
@@ -225,7 +226,8 @@ function ValueTable({
                     />
                   )}
                 </div>
-                <div className="text-xs text-muted-foreground">{value.provider}</div>
+                    <div className="text-xs text-muted-foreground">{value.provider}</div>
+                    <ModelActions modelId={value.modelId} openWeight={value.openWeight} />
               </td>
               <td className="px-3 py-2 align-top font-mono">{formatScore(value.quality)}</td>
               <td className="px-3 py-2 align-top font-mono">

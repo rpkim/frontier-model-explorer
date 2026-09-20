@@ -8,7 +8,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { HubRefreshButton } from "@/components/explorer/hub-refresh-button"
 import { ComputeGuideButton } from "@/components/guide/compute-guide-button"
 import { formatBytesGb, formatGb, formatParams, timeAgo } from "@/lib/aa/format"
-import { hasUsableHubDetail } from "@/lib/aa/guide"
+import { hasUsableHubDetail } from "@/lib/aa/hub-ready"
 import type { HubDetail } from "@/lib/aa/types"
 import { useI18n } from "@/lib/i18n/provider"
 import type { TFunction } from "@/lib/i18n/translate"

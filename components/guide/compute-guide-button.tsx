@@ -38,11 +38,13 @@ export function ComputeGuideButton({
   disabled = false,
   size = "xs",
   openGuidesTab = true,
+  onGenerated,
 }: {
   modelId: string
   disabled?: boolean
   size?: "xs" | "sm"
   openGuidesTab?: boolean
+  onGenerated?: (guide: ModelGuide) => void
 }) {
   const { t, locale } = useI18n()
   const { set } = useQueryState()
@@ -63,6 +65,7 @@ export function ComputeGuideButton({
         return
       }
       toast.success(t("hub.computeSuccess"))
+      onGenerated?.(body.guide)
       if (openGuidesTab) set({ tab: "guides", guideModel: modelId })
     } catch {
       toast.error(t("guide.errorGeneric"))

@@ -15,17 +15,22 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { colorForKey } from "@/lib/aa/colors"
 import type { ModelNode } from "@/lib/aa/types"
 import { useI18n } from "@/lib/i18n/provider"
+import { cn } from "@/lib/utils"
 
 export function ModelPicker({
   models,
   excludeIds,
   onSelect,
   disabled,
+  label,
+  className,
 }: {
   models: ModelNode[]
   excludeIds: string[]
   onSelect: (id: string) => void
   disabled?: boolean
+  label?: string
+  className?: string
 }) {
   const [open, setOpen] = useState(false)
   const { t } = useI18n()
@@ -37,12 +42,12 @@ export function ModelPicker({
         render={
           <Button
             variant="outline"
-            className="w-full justify-between border-dashed sm:w-64"
+            className={cn("w-full justify-between border-dashed sm:w-64", className)}
             disabled={disabled}
           >
             <span className="flex items-center gap-2 text-muted-foreground">
               <PlusIcon data-icon="inline-start" />
-              {t("compare.addModel")}
+              {label ?? t("compare.addModel")}
             </span>
             <ChevronsUpDownIcon className="size-4 shrink-0 opacity-50" />
           </Button>

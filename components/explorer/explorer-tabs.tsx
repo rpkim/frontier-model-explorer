@@ -92,7 +92,7 @@ export function ExplorerTabs({
         <ReportExplorer snapshotSyncedAt={syncedAt} />
       </TabsContent>
       <TabsContent value="guides" className="min-h-0 flex-1 overflow-y-auto data-[state=inactive]:hidden">
-        <GuideExplorer />
+        <GuideExplorer models={models} hub={hub} />
       </TabsContent>
     </Tabs>
   )
