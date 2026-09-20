@@ -276,6 +276,6 @@ lib/i18n/                  # locales, messages, cookie (English default)
 
 ## Data attribution and license
 
-Benchmarks, prices, and API speed come from the **Artificial Analysis** snapshot. Size, dtype, and VRAM estimates come from **Hugging Face Hub** and are cached separately. Model weights and licenses remain under their providers’ terms. Catalog API tok/s and TTFT are **not** local-cluster SLOs (the guide prompt states this explicitly).
+This project’s source code is **proprietary**. See [`LICENSE`](./LICENSE): viewing the public GitHub repo and opening a pull request are allowed; copying it into another product or service is not, unless the copyright holder gives written permission.
 
-See the repository LICENSE for this project’s source code.
+Benchmarks, prices, and API speed come from the **Artificial Analysis** snapshot. Size, dtype, and VRAM estimates come from **Hugging Face Hub** and are cached separately. Model weights and licenses remain under their providers’ terms. Catalog API tok/s and TTFT are **not** local-cluster SLOs (the guide prompt states this explicitly).
