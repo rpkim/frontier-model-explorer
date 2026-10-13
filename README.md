@@ -161,8 +161,44 @@ Password-gated writes all go through `requireSyncPassword` (`timingSafeEqual`). 
 | `GET /api/guide?modelId=` | none | Index + optional guide |
 | `POST /api/guide` | password + Gemini | Open-weight + usable Hub required (120s) |
 | `POST /api/agent` | **none** (flag) | Streaming catalog Q&A. Requires `AGENT_ENABLED=true`. 30 req/min/IP |
+| `GET /api/v1/*` | none | Public read-only catalog. 180 req/min/IP |
+| `POST /api/mcp` | none | Public MCP server over the same catalog. 180 req/min/IP, shared with `/api/v1` |
 
 Sync errors returned to the client are **codes only** (`AA_API_NOT_CONFIGURED`, `AA_API_HTTP_*`, `SYNC_FAILED`). Upstream response bodies are not exposed.
+
+### Public catalog API and MCP
+
+Read-only access to the stored snapshot. These routes do not accept `SYNC_PASSWORD` and cannot sync, refresh Hub data, or generate reports and guides.
+
+`GET /api/v1` lists the routes. Query parameters match the explorer:
+
+| Param | Meaning |
+|-------|---------|
+| `q` | Words matched against name, slug, id, and provider |
+| `providers` or `provider` | Provider slug. Comma-separated for several |
+| `open` | `1` / `open` or `0` / `proprietary`. Open-weight is a heuristic |
+| `purpose` | `coding,reasoning,math,cheap,fast` |
+| `sort` | Same sort keys as the mind map. Default `intelligence-desc` |
+| `limit`, `offset` | Page size 1–200, default 50 |
+| `include` | `hub` attaches cached Hugging Face details |
+| `by` | Group axis on `/api/v1/groups`: `provider`, `intelligence`, `price`, `speed`, `release` |
+| `models` | Up to four ids on `/api/v1/compare` |
+
+`GET /api/v1/models/{id}` accepts a catalog id or a unique slug and always includes Hub details when they are cached (`hub: null` otherwise).
+
+MCP is mounted at `/api/mcp` (Streamable HTTP). Tools: `list_models`, `get_model`, `compare_models`, `list_providers`, `list_groups`. Resources: `catalog://summary` and `catalog://models/{id}`.
+
+```json
+{
+  "mcpServers": {
+    "frontier-model-explorer": {
+      "url": "https://YOUR_HOST/api/mcp"
+    }
+  }
+}
+```
+
+`/api/v1` and `/api/mcp` share an in-memory limit of **180 requests per minute per IP**. Successful reads are cached in the instance for 15 seconds. A missing snapshot returns `503 NO_SNAPSHOT`.
 
 The agent keeps the last 16 messages and compact catalog JSON up to ~280k characters. If that budget is exceeded, per-model benchmark field `b` is dropped so every model still fits.
 
@@ -240,6 +276,7 @@ Publishing **source** is fine if real keys never enter git. `.gitignore` covers 
 | Risk | Mitigation |
 |------|------------|
 | Anyone hitting `/api/agent` spends Gemini quota | `AGENT_ENABLED` defaults off. When on: open chat + 30 req/min/IP per instance |
+| Public catalog reads (`/api/v1`, `/api/mcp`) | Same data the site already renders. 180 req/min/IP. No write tools |
 | Brute-forcing `SYNC_PASSWORD` | Use 32+ random characters; add a WAF or IP allowlist if needed |
 | Leaked `BLOB_READ_WRITE_TOKEN` | Treat as write access to your store; rotate in Vercel |
 | Forks running their own instance | They must supply their own keys; none ship in this repo |
@@ -256,6 +293,8 @@ app/
   actions/sync.ts          # AA sync / snapshot read
   actions/hub.ts           # Hub refresh / Hub snapshot read
   api/agent|report|guide|hub/
+  api/v1/                  # public catalog REST
+  api/mcp/                 # public catalog MCP
 components/
   explorer/                # header, tabs, filters, sync, language
   mindmap/                 # group/model columns, detail, Hub, sort
@@ -266,6 +305,7 @@ lib/aa/
   normalize.ts / types.ts  # Zod + ModelNode / Hub / Guide
   snapshot.ts / hub-snapshot.ts
   filter.ts / sort.ts / group-by.ts
+  catalog-query.ts         # public REST + MCP catalog queries
   hub.ts / hf-resolve.ts   # Hub mapping and VRAM
   guide.ts / report.ts     # Gemini prompts + blobs
   protect.ts / env.ts / rate-limit.ts
