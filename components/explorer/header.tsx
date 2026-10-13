@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { BrainCircuitIcon } from "lucide-react"
 import { SyncButton } from "@/components/explorer/sync-button"
 import { HubRefreshButton } from "@/components/explorer/hub-refresh-button"
@@ -47,6 +48,9 @@ export function ExplorerHeader({
             )}
           </span>
         )}
+        <Link href="/admin" className="text-xs text-muted-foreground hover:text-foreground">
+          {t("admin.nav")}
+        </Link>
         <LanguageSwitcher />
         <SyncButton />
         {modelCount > 0 && <HubRefreshButton />}

@@ -1,7 +1,6 @@
 import { createMcpHandler } from "mcp-handler"
-import { catalogRateLimit } from "@/lib/aa/catalog-store"
 import { registerCatalogServer } from "@/lib/aa/mcp-catalog"
-import { catalogError, catalogOptions } from "@/lib/aa/public-http"
+import { catalogOptions, requireCatalogAccess } from "@/lib/aa/public-http"
 
 export const dynamic = "force-dynamic"
 export const maxDuration = 30
@@ -13,12 +12,8 @@ const handler = createMcpHandler(registerCatalogServer, {
 })
 
 async function handle(req: Request): Promise<Response> {
-  const limited = catalogRateLimit(req)
-  if (!limited.allowed) {
-    return catalogError(429, "RATE_LIMITED", "Too many catalog requests.", {
-      "Retry-After": String(limited.retryAfterSec),
-    })
-  }
+  const denied = await requireCatalogAccess(req)
+  if (denied) return denied
   const response = await handler(req)
   const headers = new Headers(response.headers)
   headers.set("Access-Control-Allow-Origin", "*")

@@ -1,4 +1,4 @@
-import { catalogJson, catalogOptions } from "@/lib/aa/public-http"
+import { catalogJson, catalogOptions, requireCatalogAccess } from "@/lib/aa/public-http"
 
 export const dynamic = "force-dynamic"
 
@@ -6,6 +6,7 @@ const discovery = {
   name: "Frontier Model Explorer",
   version: "v1",
   mcp: "/api/mcp",
+  auth: "Authorization: Bearer <api key> or X-Api-Key. Issue keys at /admin.",
   attribution:
     "Scores, prices, and API speed come from the Artificial Analysis snapshot. Size, dtype, and VRAM come from the cached Hugging Face Hub snapshot. openWeight is a heuristic, not a license.",
   endpoints: [
@@ -21,7 +22,9 @@ const discovery = {
   ],
 } as const
 
-export function GET() {
+export async function GET(req: Request) {
+  const denied = await requireCatalogAccess(req)
+  if (denied) return denied
   return catalogJson(discovery)
 }
 
