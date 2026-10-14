@@ -161,8 +161,52 @@ Password-gated writes all go through `requireSyncPassword` (`timingSafeEqual`). 
 | `GET /api/guide?modelId=` | none | Index + optional guide |
 | `POST /api/guide` | password + Gemini | Open-weight + usable Hub required (120s) |
 | `POST /api/agent` | **none** (flag) | Streaming catalog Q&A. Requires `AGENT_ENABLED=true`. 30 req/min/IP |
+| `GET /api/v1/*` | API key | Read-only catalog. 180 req/min/IP |
+| `POST /api/mcp` | API key | MCP server over the same catalog. 180 req/min/IP, shared with `/api/v1` |
+| `GET/POST/DELETE /api/admin/session` | password on POST | `/admin` cookie session. 8 login attempts / 15 min / IP |
+| `GET/POST /api/admin/keys` | admin cookie | List and issue catalog keys |
+| `DELETE /api/admin/keys/{id}` | admin cookie | Revoke a catalog key |
 
 Sync errors returned to the client are **codes only** (`AA_API_NOT_CONFIGURED`, `AA_API_HTTP_*`, `SYNC_FAILED`). Upstream response bodies are not exposed.
+
+### Catalog API and MCP
+
+Read-only access to the stored snapshot. These routes do not accept `SYNC_PASSWORD` and cannot sync, refresh Hub data, or generate reports and guides. Callers send an issued key in `Authorization: Bearer` or `X-Api-Key`. Query-string keys are ignored. A missing key is `401 API_KEY_REQUIRED`. An unknown or revoked key is `401 INVALID_API_KEY`.
+
+Issue and revoke keys at `/admin`. That page asks for the sync password, then sets an HttpOnly cookie (`fme_admin`, 12 hours, HMAC-SHA256 of the expiry). The full token (`fme_` plus 32 random bytes) is shown once at creation and stored only as a SHA-256 hash. Production stores the hash list in private Blob `frontier-models/api-keys.json`. Without Blob, a non-production server uses `.data/api-keys.json`.
+
+`GET /api/v1` lists the routes. Query parameters match the explorer:
+
+| Param | Meaning |
+|-------|---------|
+| `q` | Words matched against name, slug, id, and provider |
+| `providers` or `provider` | Provider slug. Comma-separated for several |
+| `open` | `1` / `open` or `0` / `proprietary`. Open-weight is a heuristic |
+| `purpose` | `coding,reasoning,math,cheap,fast` |
+| `sort` | Same sort keys as the mind map. Default `intelligence-desc` |
+| `limit`, `offset` | Page size 1–200, default 50 |
+| `include` | `hub` attaches cached Hugging Face details |
+| `by` | Group axis on `/api/v1/groups`: `provider`, `intelligence`, `price`, `speed`, `release` |
+| `models` | Up to four ids on `/api/v1/compare` |
+
+`GET /api/v1/models/{id}` accepts a catalog id or a unique slug and always includes Hub details when they are cached (`hub: null` otherwise).
+
+MCP is mounted at `/api/mcp` (Streamable HTTP). Tools: `list_models`, `get_model`, `compare_models`, `list_providers`, `list_groups`. Resources: `catalog://summary` and `catalog://models/{id}`.
+
+```json
+{
+  "mcpServers": {
+    "frontier-model-explorer": {
+      "url": "https://YOUR_HOST/api/mcp",
+      "headers": {
+        "Authorization": "Bearer fme_YOUR_KEY"
+      }
+    }
+  }
+}
+```
+
+`/api/v1` and `/api/mcp` share an in-memory limit of **180 requests per minute per IP**. Successful reads are cached in the instance for 15 seconds. A missing snapshot returns `503 NO_SNAPSHOT`. Up to 25 keys can be active at once.
 
 The agent keeps the last 16 messages and compact catalog JSON up to ~280k characters. If that budget is exceeded, per-model benchmark field `b` is dropped so every model still fits.
 
@@ -188,7 +232,7 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) → **Sync now** (password) → optionally **Refresh details**.
+Open [http://localhost:3000](http://localhost:3000) → **Sync now** (password) → optionally **Refresh details**. Open `/admin` with the same password to issue catalog API keys.
 
 To enable the agent, set `AGENT_ENABLED=true` and `GOOGLE_GENERATIVE_AI_API_KEY` in `.env.local`, then restart the server.
 
@@ -201,8 +245,8 @@ Secrets are **server-only**. There are no `NEXT_PUBLIC_*` API keys. Use `.env.lo
 | Variable | When required | Purpose |
 |----------|---------------|---------|
 | `ARTIFICIALANALYSIS_API_KEY` | Sync | AA Data API |
-| `BLOB_READ_WRITE_TOKEN` | Sync / Hub / report / guide | Private blob read/write |
-| `SYNC_PASSWORD` | All writes | Long random string; never sent to the client as config |
+| `BLOB_READ_WRITE_TOKEN` | Sync / Hub / report / guide / API keys in production | Private blob read/write |
+| `SYNC_PASSWORD` | Writes and `/admin` | Long random string; never sent to the client as config |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | Report, guides, optional agent | Gemini |
 | `HF_TOKEN` | Optional | Gated HF models (`HUGGING_FACE_HUB_TOKEN` is also accepted) |
 | `AGENT_ENABLED` | Optional | Chat only when `true`. **Off by default** |
@@ -240,6 +284,7 @@ Publishing **source** is fine if real keys never enter git. `.gitignore` covers 
 | Risk | Mitigation |
 |------|------------|
 | Anyone hitting `/api/agent` spends Gemini quota | `AGENT_ENABLED` defaults off. When on: open chat + 30 req/min/IP per instance |
+| Catalog reads (`/api/v1`, `/api/mcp`) | Require an issued API key. Same data the site already renders. 180 req/min/IP. No write tools |
 | Brute-forcing `SYNC_PASSWORD` | Use 32+ random characters; add a WAF or IP allowlist if needed |
 | Leaked `BLOB_READ_WRITE_TOKEN` | Treat as write access to your store; rotate in Vercel |
 | Forks running their own instance | They must supply their own keys; none ship in this repo |
@@ -256,6 +301,10 @@ app/
   actions/sync.ts          # AA sync / snapshot read
   actions/hub.ts           # Hub refresh / Hub snapshot read
   api/agent|report|guide|hub/
+  admin/page.tsx           # issue and revoke catalog API keys
+  api/v1/                  # key-gated catalog REST
+  api/mcp/                 # key-gated catalog MCP
+  api/admin/               # password session and key management
 components/
   explorer/                # header, tabs, filters, sync, language
   mindmap/                 # group/model columns, detail, Hub, sort
@@ -266,6 +315,9 @@ lib/aa/
   normalize.ts / types.ts  # Zod + ModelNode / Hub / Guide
   snapshot.ts / hub-snapshot.ts
   filter.ts / sort.ts / group-by.ts
+  catalog-query.ts         # REST + MCP catalog queries
+  api-keys.ts / api-key-store.ts
+  admin-session.ts         # /admin cookie
   hub.ts / hf-resolve.ts   # Hub mapping and VRAM
   guide.ts / report.ts     # Gemini prompts + blobs
   protect.ts / env.ts / rate-limit.ts

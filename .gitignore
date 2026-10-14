@@ -20,6 +20,9 @@ next-env.d.ts
 AGENTS.md
 CLAUDE.md
 
+# Local API key store when Blob is not configured
+.data/
+
 # Local env (use .env.example as template)
 .env
 .env.local
